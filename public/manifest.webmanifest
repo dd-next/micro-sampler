@@ -1,0 +1,11 @@
+{
+  "name": "micro sampler",
+  "short_name": "sampler",
+  "description": "A browser micro-sampler: 16 slots, slicing, step sequencer and 16 punch-in effects.",
+  "start_url": "../index.html",
+  "scope": "../",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10"
+}

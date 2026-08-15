@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="description" content="A browser micro-sampler: 16 slots, slicing, step sequencer and 16 punch-in effects.">
+<meta name="theme-color" content="#0b0b10">
+<title>micro sampler</title>
+<link rel="manifest" href="public/manifest.webmanifest">
+<link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+<div class="unit">
+  <div class="head">
+    <div>
+      <div class="eyebrow">micro sampler</div>
+      <div class="title">K.O&#8202;<b>/</b>&#8202;ENGINE</div>
+    </div>
+    <div class="eyebrow" id="memInfo" style="color:var(--ink-dim)">40s MEM</div>
+  </div>
+
+  <div class="lcd">
+    <div class="lcd-top">
+      <div class="mode" id="modeLbl">KEYS</div>
+      <div class="snd"><span>snd</span> <em id="sndLbl">M1 · C</em></div>
+      <div class="pat"><span>pat</span> <em id="patLbl">1</em></div>
+      <div class="lcd-bpm"><b id="bpmVal">120</b> <span>BPM</span></div>
+    </div>
+    <div class="lcd-dots" id="dots"></div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="modes">
+    <button class="mbtn on" data-mode="keys">keys</button>
+    <button class="mbtn" data-mode="sound">sound</button>
+    <button class="mbtn" data-mode="pattern">pattern</button>
+    <button class="mbtn" data-mode="write">write</button>
+    <button class="mbtn" data-mode="fx">fx</button>
+    <button class="mbtn rec" data-mode="rec">rec</button>
+  </div>
+
+  <div class="card">
+    <div class="card-h">
+      <div class="t">sample &#8212; <b id="slotLbl">M1</b> <i id="slotType">melodic</i></div>
+      <button class="clr" id="clrSamp" title="clear sample">&#215;</button>
+    </div>
+    <canvas class="wave" id="wave"></canvas>
+    <div class="params">
+      <div class="pctl"><span class="pl"><span>tune</span><b id="tuneV">+0</b></span><input type="range" class="rng" id="tune" min="-12" max="12" value="0"></div>
+      <div class="pctl"><span class="pl"><span>filter</span><b id="filtV">open</b></span><input type="range" class="rng" id="filt" min="0" max="100" value="100"></div>
+      <div class="pctl"><span class="pl"><span>volume</span><b id="volV">90</b></span><input type="range" class="rng" id="vol" min="0" max="100" value="90"></div>
+    </div>
+    <div class="mic-warn" id="micWarn">Mic blocked in this preview. Open the downloaded file in your browser &#8212; or serve on localhost (<code>python3 -m http.server</code>) &#8212; to record.</div>
+  </div>
+
+  <div class="bar">
+    <button class="btn play" id="play">&#9654; PLAY</button>
+    <button class="btn live" id="live">&#9679; LIVE</button>
+    <button class="btn clr2" id="clr">CLR</button>
+  </div>
+  <div class="bar2">
+    <button class="tempo" id="tempo"><span id="tempoName">DISCO</span><b id="tempoBpm">120</b></button>
+    <div class="slid"><span class="sl"><span>fine tempo</span><b id="bpmV2">120</b></span><input type="range" class="rng amber" id="bpm" min="60" max="240" value="120"></div>
+    <div class="slid"><span class="sl"><span>swing</span><b id="swingV">0</b></span><input type="range" class="rng amber" id="swing" min="0" max="60" value="0"></div>
+  </div>
+
+  <p class="hint">
+    <b>SOUND</b> &#8594; pick a slot (1&#8211;8 melodic, 9&#8211;16 drum) &#183; <b>REC</b> &#8594; tap a slot and sample into it (mic) &#183;
+    <b>KEYS</b> &#8594; play it (melodic = chromatic scale, drum = 16 slices) &#183; drag the waveform to trim &#183;
+    <b>WRITE</b> &#8594; toggle 16 steps for the selected sound &#183; <b>LIVE</b> + PLAY &#8594; record notes/slices in real time &#183;
+    <b>FX</b> &#8594; hold any key for a punch-in effect. Empty slots use synth voices.
+  </p>
+</div>
+  <script src="src/state.js"></script>
+  <script src="src/audio.js"></script>
+  <script src="src/sequencer.js"></script>
+  <script src="src/fx.js"></script>
+  <script src="src/ui.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>
