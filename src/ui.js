@@ -1,130 +1,706 @@
-// ======== grid, modes, LCD ========
-const gridEl=document.getElementById('grid'), dotsEl=document.getElementById('dots');
-const modeLbl=document.getElementById('modeLbl'), sndLbl=document.getElementById('sndLbl'), patLbl=document.getElementById('patLbl');
-const slotLbl=document.getElementById('slotLbl'), slotType=document.getElementById('slotType');
-const waveCv=document.getElementById('wave'), micWarn=document.getElementById('micWarn'), clrSamp=document.getElementById('clrSamp');
-const playBtn=document.getElementById('play'), liveBtn=document.getElementById('live'), clrBtn=document.getElementById('clr');
-const tuneS=document.getElementById('tune'), filtS=document.getElementById('filt'), volS=document.getElementById('vol');
-const tuneV=document.getElementById('tuneV'), filtV=document.getElementById('filtV'), volV=document.getElementById('volV');
-const bpmS=document.getElementById('bpm'), swingS=document.getElementById('swing'), tempoBtn=document.getElementById('tempo');
-const keyEls=[], dotEls=[];
+/* ======================================================================
+   grid, modes, LCD, knobs, transport
+   ----------------------------------------------------------------------
+   Mode buttons work two ways at once: tap to latch, or hold as a
+   modifier. The hardware only does the second; on a touchscreen you often
+   have one hand free, so both are supported and they share one state
+   machine — `mode` is always heldMod || latchedMod || 'keys'.
+   ====================================================================== */
 
-for(let i=0;i<N;i++){
-  const k=document.createElement('button'); k.className='key';
-  k.innerHTML=`<span class="kidx">${i+1}</span><span class="kdot"></span><span class="klabel"></span>`;
-  const onDown=e=>{ e.preventDefault(); keyDown(i,k); };
-  const onUp=e=>{ e.preventDefault(); keyUp(i,k); };
-  k.addEventListener('pointerdown',onDown); k.addEventListener('pointerup',onUp);
-  k.addEventListener('pointerleave',onUp); k.addEventListener('pointercancel',onUp);
-  gridEl.appendChild(k); keyEls.push(k);
-  const d=document.createElement('div'); d.className='dot'+([0,4,8,12].includes(i)?' beat':''); dotsEl.appendChild(d); dotEls.push(d);
+const $ = id => document.getElementById(id);
+
+const gridEl = $('grid'), dotsEl = $('dots');
+const modeLbl = $('modeLbl'), sndLbl = $('sndLbl'), patLbl = $('patLbl'), noteLbl = $('noteLbl');
+const chainLbl = $('chainLbl'), msgLbl = $('msgLbl'), lvlFill = $('lvlFill');
+const memFill = $('memFill'), memVal = $('memVal');
+const slotLbl = $('slotLbl'), slotType = $('slotType'), warnEl = $('warn');
+const playBtn = $('play'), liveBtn = $('live'), clrBtn = $('clr');
+const bpmS = $('bpm'), swingS = $('swing'), masterS = $('master'), tempoBtn = $('tempo');
+
+const keyEls = [], dotEls = [];
+
+const DEFAULT_MSG = 'hold a mode button, or tap to latch';
+let msgTimer = null;
+
+function msg(text, ms){
+  msgLbl.textContent = text;
+  clearTimeout(msgTimer);
+  msgTimer = setTimeout(() => { msgLbl.textContent = DEFAULT_MSG; }, ms || 1900);
+}
+function warn(text){
+  warnEl.innerHTML = text;
+  warnEl.classList.toggle('show', !!text);
 }
 
-function keyDown(i,k){
-  ensureAudio();
-  if(mode==='keys'){
-    const val=i; trig(sel,actx.currentTime+0.01,val);
-    flash(k);
-    if(live && playing){ const st=(drawStepIx>=0?drawStepIx:currentStep); patterns[curPat].tracks[sel][st]=val; }
+/* Enter and Space on a focused control, with press/release semantics so
+   FX and REC can be held from the keyboard too. Native buttons only fire
+   `click`, which cannot express a hold. */
+function bindHold(el, onDown, onUp){
+  let down = false;
+  el.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (down) return;              // ignore auto-repeat
+    down = true;
+    onDown();
+  });
+  const release = e => {
+    if (e.type === 'keyup' && e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    if (!down) return;
+    if (e.preventDefault) e.preventDefault();
+    down = false;
+    onUp();
+  };
+  el.addEventListener('keyup', release);
+  el.addEventListener('blur', release);
+}
+
+/* ====================================================== build the 4x4 */
+for (let i = 0; i < N; i++){
+  const k = document.createElement('button');
+  k.className = 'key';
+  k.type = 'button';
+  k.innerHTML = `<span class="kidx">${i + 1}</span><span class="kdot"></span>` +
+                `<span class="klabel"></span><span class="ksub"></span>`;
+  k.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    k.setPointerCapture(e.pointerId);
+    keyDown(i, k);
+  });
+  const up = e => {
+    e.preventDefault();
+    try { k.releasePointerCapture(e.pointerId); } catch (err) { /* gone */ }
+    keyUp(i, k);
+  };
+  k.addEventListener('pointerup', up);
+  k.addEventListener('pointercancel', up);
+  bindHold(k, () => keyDown(i, k), () => keyUp(i, k));
+  gridEl.appendChild(k);
+  keyEls.push(k);
+
+  const d = document.createElement('div');
+  d.className = 'dot' + ([0, 4, 8, 12].includes(i) ? ' beat' : '');
+  dotsEl.appendChild(d);
+  dotEls.push(d);
+}
+
+/* ====================================================== modifier state */
+/* Several modifiers can be physically down at once — WRITE latched plus FX
+   held is how effects get saved into a pattern — so held buttons are a
+   stack, not a single slot. The topmost one decides the mode. */
+const heldStack = [];               // [{ mod, at, used, wasLatched }]
+let latchedMod = null;
+let chainBuilding = false;
+
+const topHeld = () => (heldStack.length ? heldStack[heldStack.length - 1].mod : null);
+const isHeld  = m => heldStack.some(h => h.mod === m);
+const writeArmed = () => isHeld('write') || latchedMod === 'write';
+
+function applyMode(){
+  const next = topHeld() || latchedMod || 'keys';
+  if (next === mode){ paintModeButtons(); return; }
+  const prev = mode;
+  mode = next;
+  onLeaveMode(prev);
+  onEnterMode(next);
+  modeLbl.textContent = next.toUpperCase();
+  paintModeButtons();
+  renderGrid();
+}
+
+function paintModeButtons(){
+  document.querySelectorAll('.mbtn').forEach(b => {
+    b.classList.toggle('on', b.dataset.mod === mode || b.dataset.mod === latchedMod);
+    b.classList.toggle('held', isHeld(b.dataset.mod));
+  });
+}
+
+function onEnterMode(m){
+  if (m === 'rec'){
+    armMic().then(() => { warn(''); msg('hold a key to sample'); })
+            .catch(showMicError);
   }
-  else if(mode==='sound'){ selectSlot(i); setMode('keys'); }
-  else if(mode==='pattern'){ curPat=i; patLbl.textContent=i+1; renderGrid(); setMode('keys'); }
-  else if(mode==='write'){ const cur=patterns[curPat].tracks[sel][i]; patterns[curPat].tracks[sel][i]= cur==null?0:null; renderGrid(); }
-  else if(mode==='fx'){ fxDown(i,k); }
-  else if(mode==='rec'){ recToggle(i); }
+  if (m === 'pattern') msg('hold and press keys to chain');
+  if (m === 'fx') msg('hold a key for an effect');
+  if (m === 'bpm') msg('keys 1–16 set master volume');
+  if (m === 'write') msg(playing ? 'punch keys in — quantized' : 'keys are the 16 steps');
+  if (m === 'sound') msg('pick a sound');
 }
-function keyUp(i,k){ if(mode==='fx') fxUp(i,k); }
-function flash(k){ k.classList.add('hit'); setTimeout(()=>k.classList.remove('hit'),90); }
-
-function selectSlot(i){ sel=i;
-  slotLbl.textContent=(i<8?'M':'D')+(i+1); slotType.textContent=i<8?'melodic':'drum';
-  sndLbl.textContent=(i<8?'M':'D')+(i+1)+' · '+(i<8?'chromatic':'16 slices');
-  tuneS.value=slots[i].tune; tuneV.textContent=(slots[i].tune>0?'+':'')+slots[i].tune;
-  volS.value=Math.round(slots[i].vol*100); volV.textContent=Math.round(slots[i].vol*100);
-  filtS.value=Math.round(slots[i].cut*100); filtV.textContent=slots[i].cut>=1?'open':Math.round(200*Math.pow(90,slots[i].cut))+'Hz';
-  drawWave(); renderGrid();
+function onLeaveMode(m){
+  if (m === 'fx') fxAllOff();
+  if (m === 'rec'){ releaseMic(); recIntent = null; }
 }
-function setMode(m){ mode=m; modeLbl.textContent=m.toUpperCase();
-  document.querySelectorAll('.mbtn').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
-  if(m!=='fx'){ fxUpAll(); } renderGrid(); }
-document.querySelectorAll('.mbtn').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
 
-function patternHasContent(p){ return patterns[p].tracks.some(tr=>tr.some(c=>c!=null)); }
+function modDown(m){
+  ensureAudio();
+  if (isHeld(m)) return;
+  const wasLatched = latchedMod === m;
+  if (wasLatched) latchedMod = null;            // tapping a latched mode exits it
+  heldStack.push({ mod:m, at:performance.now(), used:false, wasLatched });
+  // Each fresh press of PATTERN starts a new chain, even when the mode was
+  // already active and applyMode below has nothing to transition.
+  if (m === 'pattern') chainBuilding = false;
+  applyMode();
+}
+function modUp(m){
+  const ix = heldStack.findIndex(h => h.mod === m);
+  if (ix < 0) return;
+  const h = heldStack.splice(ix, 1)[0];
+  const quick = performance.now() - h.at < 450;
+  // A quick tap that did nothing latches the mode. Anything else — a long
+  // hold, or a hold that was used as a modifier — leaves any existing latch
+  // alone, so WRITE survives being combined with FX.
+  if (!h.used && quick && !h.wasLatched) latchedMod = m;
+  applyMode();
+}
+function markModUsed(){
+  if (heldStack.length) heldStack[heldStack.length - 1].used = true;
+}
+
+document.querySelectorAll('.mbtn').forEach(b => {
+  const m = b.dataset.mod;
+  b.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    b.setPointerCapture(e.pointerId);
+    modDown(m);
+  });
+  const up = e => {
+    e.preventDefault();
+    try { b.releasePointerCapture(e.pointerId); } catch (err) { /* gone */ }
+    modUp(m);
+  };
+  b.addEventListener('pointerup', up);
+  b.addEventListener('pointercancel', up);
+  bindHold(b, () => modDown(m), () => modUp(m));
+});
+
+/* ====================================================== key dispatch */
+function keyDown(i, el){
+  ensureAudio();
+  markModUsed();
+
+  switch (mode){
+    case 'keys':    playKey(i, el); break;
+    case 'sound':   soundKey(i); flash(el); break;
+    case 'pattern': patternKey(i); flash(el); break;
+    case 'write':   writeKey(i, el); break;
+    case 'fx':      fxKey(i, el); break;
+    case 'rec':     recKeyDown(i); break;
+    case 'bpm':     volumeKey(i); flash(el); break;
+  }
+}
+function keyUp(i, el){
+  if (mode === 'fx'){ fxOff(i); el.classList.remove('act'); renderGrid(); }
+  if (mode === 'rec') recKeyUp(i);
+}
+/* After a one-shot pick, drop back to KEYS if the mode was only latched. */
+function releaseLatch(){
+  if (!topHeld() && latchedMod){ latchedMod = null; applyMode(); }
+}
+function flash(el){
+  el.classList.add('hit');
+  setTimeout(() => el.classList.remove('hit'), 90);
+}
+
+/* -------------------------------------------------------------- SOUND */
+function soundKey(i){
+  if (copyArmed && copySource != null && i !== copySource) doCopy(i);
+  else if (copyArmed) cancelCopy('pick a different slot');
+  selectSlot(i);
+  releaseLatch();
+}
+
+/* --------------------------------------------------------------- KEYS */
+function playKey(i, el){
+  const s = slots[sel];
+  if (s.type === 'drum'){ lastSlice = i; } else { lastNote = i; }
+  trig(sel, actx.currentTime + 0.005, i);
+  flash(el);
+  updateNoteLabel();
+  if (page === 'trim'){ drawWave(); syncKnobsFromSlot(); }
+
+  if (live && playing){
+    const st = quantizedStep();
+    patterns[curPat].tracks[sel][st] = { v: i };
+    scheduleSave();
+    paintHeads();
+  }
+}
+
+/* ------------------------------------------------------------ PATTERN */
+/* Holding PATTERN and pressing several keys builds a chain, exactly as the
+   hardware does. When the mode is merely latched, each press is a plain
+   single selection instead — otherwise a second tap would silently turn a
+   pattern change into a two-bar song. */
+function patternKey(i){
+  const chaining = isHeld('pattern') && chainBuilding;
+  if (chaining && chain.length < MAX_CHAIN){
+    chain.push(i);
+    msg('chain — ' + chain.length + ' bars');
+  } else if (chaining){
+    msg('chain is full (' + MAX_CHAIN + ')');
+  } else {
+    chain = [i];
+    chainBuilding = true;
+    chainPos = 0;
+    if (!playing) curPat = i;
+    msg('pattern ' + (i + 1));
+  }
+  updateChainLabel();
+  renderGrid();
+  scheduleSave();
+}
+
+/* -------------------------------------------------------------- WRITE */
+function writeKey(i, el){
+  const pat = patterns[curPat];
+  if (playing){
+    // punch in: the key is a note, quantized to the nearest step
+    const st = quantizedStep();
+    const s = slots[sel];
+    if (s.type === 'drum') lastSlice = i; else lastNote = i;
+    pat.tracks[sel][st] = { v: i };
+    trig(sel, actx.currentTime + 0.005, i);
+    flash(el);
+    msg('step ' + (st + 1) + ' ← ' + noteName(i));
+  } else {
+    // step mode: the key is a step, toggled on and off
+    const cur = pat.tracks[sel][i];
+    pat.tracks[sel][i] = cur == null ? { v: slots[sel].type === 'drum' ? lastSlice : lastNote } : null;
+    flash(el);
+  }
+  renderGrid();
+  scheduleSave();
+}
+
+/* ----------------------------------------------------------------- FX */
+function fxKey(i, el){
+  fxOn(i);
+  el.classList.add('act');
+  if (writeArmed() && playing){
+    patterns[curPat].fx[quantizedStep()] = i;
+    msg(i === 15 ? 'fx cleared at step' : 'saved ' + FX_NAMES[i]);
+    scheduleSave();
+  } else {
+    msg(FX_NAMES[i] + ' — ' + FX_HINTS[i]);
+  }
+  renderGrid();
+}
+
+/* ---------------------------------------------------------------- REC */
+let recIntent = null;
+function recKeyDown(i){
+  if (!micActive()){ msg('waiting for the microphone…'); return; }
+  if (memFree() < 0.1){ msg('memory full — delete a sound'); return; }
+  recIntent = i;
+  if (startRec(i)){ renderGrid(); msg('sampling into ' + slotName(i) + '…'); }
+}
+function recKeyUp(i){
+  if (recIntent !== i) return;
+  recIntent = null;
+  // the capture node flushes asynchronously, so the take lands a moment later
+  stopRec().then(r => {
+    if (r === 'ok'){
+      invalidatePeaks();
+      lastSlice = 0;
+      selectSlot(i);
+      releaseLatch();
+      msg('sampled ' + slotName(i) + ' — ' + slots[i].buffer.duration.toFixed(2) + 's');
+      scheduleSave();
+    } else if (r === 'short'){
+      msg('too short — hold the key down');
+    }
+    renderGrid();
+    updateMem();
+  });
+}
+function showMicError(err){
+  const secure = window.isSecureContext;
+  if (!secure){
+    warn('Microphone needs a secure context. Serve over <code>https</code>, or run ' +
+         '<code>python3 -m http.server</code> and open <code>http://localhost:8000</code>.');
+  } else if (err && err.name === 'NotAllowedError'){
+    warn('Microphone permission was denied. Allow it in your browser’s site settings, then press REC again.');
+  } else {
+    warn('No microphone available. Everything else works — empty slots play synth voices.');
+  }
+}
+
+/* ---------------------------------------------------------------- BPM */
+function volumeKey(i){
+  setMaster((i + 1) / 16);
+  masterS.value = Math.round(master * 100);
+  $('masterV').textContent = Math.round(master * 100);
+  msg('volume ' + Math.round(master * 100));
+  renderGrid();
+  scheduleSave();
+}
+
+/* ====================================================== slot selection */
+function slotName(i){ return (i < 8 ? 'M' : 'D') + (i + 1); }
+function noteName(v){
+  return slots[sel].type === 'drum' ? 'slice ' + (v + 1) : NOTE_NAMES[v];
+}
+function updateNoteLabel(){
+  noteLbl.textContent = slots[sel].type === 'drum' ? 'S' + (lastSlice + 1) : NOTE_NAMES[lastNote];
+}
+
+function selectSlot(i){
+  sel = i;
+  lastSlice = Math.min(lastSlice, 15);
+  invalidatePeaks();
+  slotLbl.textContent = slotName(i);
+  slotType.textContent = slots[i].type === 'drum' ? 'drum · 16 slices' : 'melodic · chromatic';
+  sndLbl.textContent = slotName(i);
+  updateNoteLabel();
+  syncKnobsFromSlot();
+  drawWave();
+  renderGrid();
+}
+
+/* ============================================================== knobs */
+function pct(v){ return Math.round(v * 100) + '%'; }
+function filterLabel(v){
+  if (filterIsOpen(v, 0)) return 'open';
+  const f = filterFreq(v);
+  return f >= 1000 ? (f / 1000).toFixed(1) + 'k' : Math.round(f) + '';
+}
+
+const KNOB_DEFS = {
+  tone: {
+    a: { key:'tune', name:'A · tune', min:-12, max:12, step:1, def:0, center:true,
+         format:v => (v > 0 ? '+' : '') + v, tag:() => '' },
+    b: { key:'vol', name:'B · volume', min:0, max:1, step:0.01, def:0.9,
+         format:v => String(Math.round(v * 100)), tag:() => '' }
+  },
+  filter: {
+    a: { key:'cut', name:'A · filter', min:0, max:1, step:0.01, def:0.5, center:true,
+         format:filterLabel,
+         tag:v => filterIsOpen(v, 0) ? '' : (v < FILTER_OPEN ? 'lo' : 'hi') },
+    b: { key:'res', name:'B · resonance', min:0, max:1, step:0.01, def:0,
+         format:v => String(Math.round(v * 100)), tag:() => '' }
+  },
+  trim: {
+    a: { key:'start', name:'A · start', min:0, max:1, step:0.002, def:0,
+         format:pct, tag:() => '' },
+    b: { key:'len', name:'B · length', min:0, max:1, step:0.002, def:1,
+         format:pct, tag:() => '' }
+  }
+};
+
+function readParam(key){
+  const s = slots[sel];
+  if (key === 'start') return activeRegion().start;
+  if (key === 'len')   return activeRegion().len;
+  return s[key];
+}
+function writeParam(key, v){
+  const s = slots[sel];
+  if (key === 'start'){ const r = activeRegion(); setRegion(v, r.start + r.len - v); drawWave(); return; }
+  if (key === 'len'){   const r = activeRegion(); setRegion(r.start, v); drawWave(); return; }
+  s[key] = v;
+  if (key === 'cut' || key === 'res') drawWave();
+}
+
+let knobA = null, knobB = null, knobGesture = false;
+
+function knobChanged(def, v){
+  // hold WRITE while playing to lock the value to the current step
+  if (writeArmed() && playing && PAGE_SPEC[page].lock){
+    const st = quantizedStep();
+    const pat = patterns[curPat];
+    const cell = pat.tracks[sel][st] || (pat.tracks[sel][st] = { v: slots[sel].type === 'drum' ? lastSlice : lastNote });
+    cell[def.key] = v;
+    msg('locked ' + def.key + ' at step ' + (st + 1));
+    paintHeads();
+  } else {
+    writeParam(def.key, v);
+  }
+  scheduleSave();
+}
+
+function buildKnobs(){
+  const mk = (el, side) => {
+    const def = KNOB_DEFS[page][side];
+    return makeKnob(el, Object.assign({}, def, {
+      def: def.def,
+      onInput: v => knobChanged(def, v),
+      onGesture: on => { knobGesture = on; }
+    }));
+  };
+  knobA = mk($('knobA'), 'a');
+  knobB = mk($('knobB'), 'b');
+  syncKnobsFromSlot();
+}
+
+function syncKnobsFromSlot(){
+  if (!knobA) return;
+  const da = KNOB_DEFS[page].a, db = KNOB_DEFS[page].b;
+  knobA.reconfigure(Object.assign({}, da, { value: readParam(da.key) }));
+  knobB.reconfigure(Object.assign({}, db, { value: readParam(db.key) }));
+  const lockable = PAGE_SPEC[page].lock && writeArmed() && playing;
+  knobA.setLocked(lockable);
+  knobB.setLocked(lockable);
+}
+
+function setPage(p){
+  page = p;
+  document.querySelectorAll('.pg').forEach(b => b.classList.toggle('on', b.dataset.page === p));
+  syncKnobsFromSlot();
+  drawWave();
+}
+document.querySelectorAll('.pg').forEach(b => {
+  b.addEventListener('click', () => setPage(b.dataset.page));
+});
+
+/* ========================================================= grid render */
 function renderGrid(){
-  keyEls.forEach((el,i)=>{
-    el.classList.remove('sel','on','head','loaded','act','mel','drum','recing','fxkey');
-    const lab=el.querySelector('.klabel'); let t='';
-    if(mode==='keys'){ t=sel<8?NOTE_NAMES[i]:'S'+(i+1); }
-    else if(mode==='sound'){ t=(i<8?'M':'D')+(i+1); el.classList.add(i<8?'mel':'drum'); if(slots[i].buffer)el.classList.add('loaded'); if(i===sel)el.classList.add('sel'); }
-    else if(mode==='pattern'){ t='P'+(i+1); if(patternHasContent(i))el.classList.add('loaded'); if(i===curPat)el.classList.add('sel'); }
-    else if(mode==='write'){ t=String(i+1); if(patterns[curPat].tracks[sel][i]!=null)el.classList.add('on'); if(i===drawStepIx&&playing)el.classList.add('head'); }
-    else if(mode==='fx'){ t=FX_NAMES[i]; el.classList.add('fxkey'); if(activeFX===i)el.classList.add('act'); }
-    else if(mode==='rec'){ t=(i<8?'M':'D')+(i+1); if(slots[i].buffer)el.classList.add('loaded'); if(recActive===i)el.classList.add('recing'); }
-    lab.textContent=t;
+  const s = slots[sel];
+  const pat = patterns[curPat];
+
+  keyEls.forEach((el, i) => {
+    el.className = 'key';
+    const lab = el.querySelector('.klabel');
+    const sub = el.querySelector('.ksub');
+    let t = '', st = '';
+
+    switch (mode){
+      case 'keys':
+        t = s.type === 'drum' ? 'S' + (i + 1) : NOTE_NAMES[i];
+        if (s.type === 'drum' && i === lastSlice) el.classList.add('sel', 'drum');
+        break;
+
+      case 'sound':
+        t = slotName(i);
+        el.classList.add(i < 8 ? 'mel' : 'drum');
+        if (slots[i].buffer) el.classList.add('loaded');
+        if (i === sel) el.classList.add('sel');
+        st = slots[i].buffer ? slots[i].buffer.duration.toFixed(1) + 's' : 'synth';
+        break;
+
+      case 'pattern': {
+        t = 'P' + (i + 1);
+        if (patternHasContent(i)) el.classList.add('loaded');
+        if (i === curPat) el.classList.add('sel');
+        const n = chain.filter(c => c === i).length;
+        if (n) st = n > 1 ? '×' + n : 'in chain';
+        break;
+      }
+
+      case 'write':
+        if (playing){
+          t = s.type === 'drum' ? 'S' + (i + 1) : NOTE_NAMES[i];
+          st = 'punch';
+        } else {
+          t = String(i + 1);
+          const cell = pat.tracks[sel][i];
+          if (cell) el.classList.add('on');
+          if (hasLock(cell)) st = 'lock';
+          else if (cell && s.type === 'mel') st = NOTE_NAMES[cell.v];
+          else if (cell && s.type === 'drum') st = 'S' + (cell.v + 1);
+          if (i === drawStepIx && playing) el.classList.add('head');
+        }
+        break;
+
+      case 'fx':
+        t = FX_NAMES[i];
+        el.classList.add('fxkey');
+        if (fxIsActive(i)) el.classList.add('act');
+        if (pat.fx.includes(i)) el.classList.add('saved');
+        break;
+
+      case 'rec':
+        t = slotName(i);
+        el.classList.add(i < 8 ? 'mel' : 'drum');
+        if (slots[i].buffer) el.classList.add('loaded');
+        if (recActiveSlot() === i) el.classList.add('recing');
+        st = slots[i].buffer ? 'replace' : 'empty';
+        break;
+
+      case 'bpm':
+        t = String(i + 1);
+        if ((i + 1) / 16 <= master + 0.001) el.classList.add('on');
+        st = i === 15 ? 'max' : (i === 0 ? 'min' : '');
+        break;
+    }
+    lab.textContent = t;
+    sub.textContent = st;
   });
   paintHeads();
 }
+
 function paintHeads(){
-  for(let i=0;i<N;i++){ dotEls[i].classList.remove('set','head');
-    if(patterns[curPat].tracks[sel][i]!=null) dotEls[i].classList.add('set');
-    if(i===drawStepIx) dotEls[i].classList.add('head');
-    if(mode==='write'){ keyEls[i].classList.toggle('head',i===drawStepIx&&playing); }
+  const track = patterns[curPat].tracks[sel];
+  const fxRow = patterns[curPat].fx;
+  for (let i = 0; i < N; i++){
+    const d = dotEls[i];
+    d.classList.toggle('set', track[i] != null || fxRow[i] != null);
+    d.classList.toggle('lock', hasLock(track[i]));
+    d.classList.toggle('head', i === drawStepIx);
+    if (mode === 'write' && !playing) continue;
+    keyEls[i].classList.toggle('head', mode === 'write' && i === drawStepIx && playing);
   }
 }
-function drawLoop(){ if(!playing)return; while(queue.length&&queue[0].time<actx.currentTime){ drawStepIx=queue[0].step; queue.shift(); } paintHeads(); requestAnimationFrame(drawLoop); }
 
-// ======== waveform + trim ========
-function sizeCv(cv){ const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1; cv.width=r.width*dpr; cv.height=r.height*dpr;
-  const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0); return {c,w:r.width,h:r.height}; }
-function drawWave(){
-  const s=slots[sel], {c,w,h}=sizeCv(waveCv); c.clearRect(0,0,w,h);
-  if(!s.buffer){ c.fillStyle='#3a3a4a'; c.font='9px monospace'; c.textAlign='center';
-    c.fillText('no sample · synth voice · use REC to sample', w/2, h/2+3); return; }
-  const data=s.buffer.getChannelData(0), mid=h/2, step=Math.max(1,Math.floor(data.length/w));
-  const sx=s.start*w, ex=(s.start+s.length)*w;
-  for(let x=0;x<w;x++){ let mn=1,mx=-1; const i0=x*step; for(let j=0;j<step;j++){ const v=data[i0+j]||0; if(v<mn)mn=v; if(v>mx)mx=v; }
-    c.fillStyle=(x>=sx&&x<=ex)?(sel<8?'#9b6cff':'#4fd4c4'):'#3f3f52'; c.fillRect(x,mid+mn*mid,1,Math.max(1,(mx-mn)*mid)); }
-  c.fillStyle='rgba(0,0,0,.45)'; c.fillRect(0,0,sx,h); c.fillRect(ex,0,w-ex,h);
-  if(sel>=8){ c.strokeStyle='rgba(79,212,196,.35)'; c.lineWidth=1; for(let k=1;k<16;k++){ const x=sx+(ex-sx)*(k/16); c.beginPath(); c.moveTo(x,0); c.lineTo(x,h); c.stroke(); } }
-  c.fillStyle='#f0a53c'; c.fillRect(sx-1,0,2,h); c.fillRect(ex-1,0,2,h); c.fillRect(sx-4,0,8,6); c.fillRect(ex-4,0,8,6);
+/* ============================================================ LCD bits */
+function updateMem(){
+  const free = memFree();
+  const f = free / MEM_SECONDS;
+  memFill.style.width = (f * 100).toFixed(1) + '%';
+  memVal.textContent = free.toFixed(1);
+  memFill.parentElement.classList.toggle('low', f < 0.25 && f > 0.02);
+  memFill.parentElement.classList.toggle('full', f <= 0.02);
 }
-let dragH=null;
-waveCv.addEventListener('pointerdown',e=>{ const s=slots[sel]; if(!s.buffer)return; const r=waveCv.getBoundingClientRect(),x=(e.clientX-r.left)/r.width;
-  dragH=Math.abs(x-s.start)<Math.abs(x-(s.start+s.length))?'start':'end'; waveCv.setPointerCapture(e.pointerId); moveTrim(x); });
-waveCv.addEventListener('pointermove',e=>{ if(!dragH)return; const r=waveCv.getBoundingClientRect(); moveTrim((e.clientX-r.left)/r.width); });
-waveCv.addEventListener('pointerup',()=>dragH=null); waveCv.addEventListener('pointercancel',()=>dragH=null);
-function moveTrim(x){ const s=slots[sel]; x=Math.max(0,Math.min(1,x));
-  if(dragH==='start'){ const end=s.start+s.length; s.start=Math.min(x,end-0.02); s.length=end-s.start; }
-  else { s.length=Math.max(0.02,x-s.start); if(s.start+s.length>1)s.length=1-s.start; } drawWave(); }
-window.addEventListener('resize',drawWave);
-
-// ======== mic recording ========
-let micStream=null, recorder=null, chunks=[], recActive=null, recTimer=null;
-async function armMic(){ if(micStream)return micStream; micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); return micStream; }
-async function recToggle(i){
-  if(recActive!=null){ stopRec(); return; }
-  ensureAudio(); try{ await armMic(); }catch(err){ micWarn.classList.add('show'); return; }
-  micWarn.classList.remove('show'); chunks=[]; recorder=new MediaRecorder(micStream);
-  recorder.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
-  recorder.onstop=async()=>{ const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
-    try{ const arr=await blob.arrayBuffer(); const audio=await actx.decodeAudioData(arr);
-      const s=slots[recActive]; s.buffer=audio; s.rev=null; s.start=0; s.length=1;
-      const done=recActive; recActive=null; sel=done; selectSlot(done); setMode('keys');
-    }catch(err){ micWarn.textContent='Could not decode the recording in this browser.'; micWarn.classList.add('show'); recActive=null; renderGrid(); } };
-  recorder.start(); recActive=i; renderGrid(); recTimer=setTimeout(stopRec,4000);
+function updateChainLabel(){
+  chainLbl.textContent = chain.length > 1
+    ? 'chain ' + chain.map(c => c + 1).join('·').slice(0, 22)
+    : 'chain ' + (chain[0] + 1);
+  patLbl.textContent = (curPat + 1) + (chain.length > 1 ? '/' + chain.length : '');
 }
-function stopRec(){ clearTimeout(recTimer); if(recorder&&recorder.state==='recording') recorder.stop(); }
-clrSamp.addEventListener('click',()=>{ const s=slots[sel]; s.buffer=null; s.rev=null; s.start=0; s.length=1; drawWave(); renderGrid(); });
 
-// ======== params / transport ========
-tuneS.addEventListener('input',e=>{ slots[sel].tune=+e.target.value; tuneV.textContent=(slots[sel].tune>0?'+':'')+slots[sel].tune; });
-volS.addEventListener('input',e=>{ slots[sel].vol=e.target.value/100; volV.textContent=e.target.value; });
-filtS.addEventListener('input',e=>{ slots[sel].cut=e.target.value/100; filtV.textContent=slots[sel].cut>=1?'open':Math.round(200*Math.pow(90,slots[sel].cut))+'Hz'; drawWave(); });
-playBtn.addEventListener('click',()=> playing?stopSeq():startSeq());
-liveBtn.addEventListener('click',()=>{ live=!live; liveBtn.classList.toggle('on',live); });
-clrBtn.addEventListener('click',()=>{ patterns[curPat].tracks[sel].fill(null); renderGrid(); });
-bpmS.addEventListener('input',e=>{ bpm=+e.target.value; syncTempoLabels(); });
-swingS.addEventListener('input',e=>{ swing=+e.target.value; document.getElementById('swingV').textContent=swing; });
-tempoBtn.addEventListener('click',()=>{ tempoIx=(tempoIx+1)%TEMPOS.length; bpm=TEMPOS[tempoIx].b; bpmS.value=bpm; syncTempoLabels(); });
-function syncTempoLabels(){ document.getElementById('bpmVal').textContent=bpm; document.getElementById('bpmV2').textContent=bpm;
-  document.getElementById('tempoBpm').textContent=bpm; const m=TEMPOS.find(x=>x.b===bpm); document.getElementById('tempoName').textContent=m?m.n:'CUSTOM'; }
+/* ============================================================ transport */
+playBtn.addEventListener('click', () => {
+  ensureAudio();
+  if (playing){ stopSeq(); } else { startSeq(); }
+  playBtn.classList.toggle('on', playing);
+  playBtn.innerHTML = playing ? '■&nbsp; STOP' : '▶&nbsp; PLAY';
+  renderGrid();
+});
+liveBtn.addEventListener('click', () => {
+  live = !live;
+  liveBtn.classList.toggle('on', live);
+  msg(live ? 'live record armed' : 'live record off');
+});
+clrBtn.addEventListener('click', () => {
+  const pat = patterns[curPat];
+  pat.tracks[sel].fill(null);
+  msg('cleared ' + slotName(sel) + ' in pattern ' + (curPat + 1));
+  renderGrid();
+  scheduleSave();
+});
+
+bpmS.addEventListener('input', e => { bpm = +e.target.value; syncTempoLabels(); scheduleSave(); });
+swingS.addEventListener('input', e => {
+  swing = +e.target.value;
+  $('swingV').textContent = swing;
+  scheduleSave();
+});
+masterS.addEventListener('input', e => {
+  setMaster(e.target.value / 100);
+  $('masterV').textContent = e.target.value;
+  scheduleSave();
+});
+tempoBtn.addEventListener('click', () => {
+  tempoIx = (tempoIx + 1) % TEMPOS.length;
+  bpm = TEMPOS[tempoIx].b;
+  bpmS.value = bpm;
+  syncTempoLabels();
+  scheduleSave();
+});
+function syncTempoLabels(){
+  $('bpmVal').textContent = bpm;
+  $('bpmV2').textContent = bpm;
+  $('tempoBpm').textContent = bpm;
+  const m = TEMPOS.find(x => x.b === bpm);
+  $('tempoName').textContent = m ? m.n : 'CUSTOM';
+}
+
+/* ======================================================= sound actions */
+$('clrSamp').addEventListener('click', () => {
+  const s = slots[sel];
+  if (!s.buffer){ msg('slot is already empty'); return; }
+  s.buffer = null; s.rev = null; s.start = 0; s.length = 1;
+  resetSlices(s);
+  invalidatePeaks();
+  msg('deleted ' + slotName(sel));
+  drawWave(); renderGrid(); updateMem(); syncKnobsFromSlot(); scheduleSave();
+});
+$('revBtn').addEventListener('click', () => {
+  const s = slots[sel];
+  if (!s.buffer){ msg('nothing to reverse'); return; }
+  s.buffer = makeRev(s.buffer);
+  s.rev = null;
+  invalidatePeaks();
+  msg('reversed ' + slotName(sel));
+  drawWave(); scheduleSave();
+});
+$('resliceBtn').addEventListener('click', () => {
+  const s = slots[sel];
+  if (s.type !== 'drum'){ msg('slices are for drum slots 9–16'); return; }
+  resetSlices(s);
+  msg('re-sliced into 16 even pieces');
+  drawWave(); syncKnobsFromSlot(); scheduleSave();
+});
+
+let copyArmed = false, copySource = null;
+const copyBtn = $('copyBtn');
+
+copyBtn.addEventListener('click', () => {
+  if (copyArmed){ cancelCopy('copy cancelled'); return; }
+  if (!slots[sel].buffer){ msg('nothing to copy'); return; }
+  copyArmed = true;
+  copySource = sel;
+  copyBtn.classList.add('armed');
+  latchedMod = 'sound';
+  applyMode();
+  msg('pick a destination slot');
+});
+function cancelCopy(why){
+  copyArmed = false; copySource = null;
+  copyBtn.classList.remove('armed');
+  if (why) msg(why);
+}
+function doCopy(dstIx){
+  const src = slots[copySource], dst = slots[dstIx];
+  if (!src.buffer){ cancelCopy('source is empty'); return; }
+  // buffers are shared by reference, so a copy costs no extra memory
+  dst.buffer = src.buffer;
+  dst.rev = null;
+  dst.start = src.start; dst.length = src.length;
+  dst.tune = src.tune; dst.vol = src.vol; dst.cut = src.cut; dst.res = src.res;
+  dst.slices = src.slices ? src.slices.map(x => ({ s:x.s, l:x.l })) : null;
+  const from = slotName(copySource), to = slotName(dstIx);
+  cancelCopy(null);
+  msg('copied ' + from + ' → ' + to);
+  updateMem();
+  scheduleSave();
+}
+
+/* ============================================================= UI loop */
+let lastPat = -1, lastDrawStep = -2, rafRunning = false;
+
+function uiLoop(){
+  if (!actx){ rafRunning = false; return; }
+  requestAnimationFrame(uiLoop);
+
+  if (playing){
+    while (queue.length && queue[0].time <= actx.currentTime){
+      drawStepIx = queue.shift().step;
+    }
+  }
+  if (drawStepIx !== lastDrawStep){ lastDrawStep = drawStepIx; paintHeads(); }
+  if (curPat !== lastPat){
+    lastPat = curPat;
+    updateChainLabel();
+    if (mode === 'pattern' || mode === 'write' || mode === 'fx') renderGrid();
+    else paintHeads();
+  }
+
+  // level meter — recording level while sampling, output level otherwise
+  const lvl = recActiveSlot() != null ? recPeakLevel() : meterLevel();
+  lvlFill.style.width = Math.min(100, lvl * 130).toFixed(0) + '%';
+
+  if (recActiveSlot() != null){
+    memVal.textContent = Math.max(0, memFree() - recSeconds()).toFixed(1);
+    memFill.style.width = (Math.max(0, memFree() - recSeconds()) / MEM_SECONDS * 100).toFixed(1) + '%';
+  }
+}
+/* Called by ensureAudio — the loop can only run once there is a clock. */
+function startUiLoop(){
+  if (rafRunning) return;
+  rafRunning = true;
+  requestAnimationFrame(uiLoop);
+}
