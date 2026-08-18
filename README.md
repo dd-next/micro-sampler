@@ -7,7 +7,7 @@ them into a song, and hold any key for a punch-in effect.
 No framework, no bundler, no runtime dependencies. Open `index.html` and it
 runs. Works with a mouse, a touchscreen, or the computer keyboard.
 
-**Live demo:** _(add your URL here)_
+**Live demo:** https://dd-next.github.io/micro-sampler/
 
 ---
 
