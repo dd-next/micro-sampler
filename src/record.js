@@ -35,7 +35,16 @@ class Cap extends AudioWorkletProcessor {
     });
     this.n = 0; this.peak = 0;
   }
-  process(inputs){
+  process(inputs, outputs){
+    // Keep the worklet in the rendered graph. Safari may stop pulling an
+    // input-only node with no downstream connection, which means no PCM ever
+    // reaches the main thread. The output is routed through a zero-gain sink.
+    const out = outputs[0];
+    if (out){
+      for (let c = 0; c < out.length; c++){
+        for (let i = 0; i < out[c].length; i++) out[c][i] = 0;
+      }
+    }
     const ch = inputs[0] && inputs[0][0];
     if (this.on && ch){
       for (let i = 0; i < ch.length; i++){
@@ -52,7 +61,7 @@ class Cap extends AudioWorkletProcessor {
 registerProcessor('cap', Cap);
 `;
 
-let micStream = null, micSource = null, capNode = null, capIsWorklet = false;
+let micStream = null, micSource = null, capNode = null, capSink = null, capIsWorklet = false;
 let recState = 'idle';            // idle | recording | stopping
 let recSlot = null, recChunks = [], recCount = 0, recLimit = 0;
 let recPeak = 0, recCapTimer = null;
@@ -80,6 +89,9 @@ async function armMic(){
       channelCount:1
     }
   });
+  // The permission prompt is asynchronous. Retry the context resume after it
+  // closes so iOS does not leave the capture graph suspended.
+  await resumeAudio();
   micSource = actx.createMediaStreamSource(micStream);
   await buildCapture();
   micSource.connect(capNode);
@@ -89,16 +101,37 @@ async function armMic(){
 async function buildCapture(){
   // AudioWorklet first — off the main thread, so UI work cannot drop samples
   if (actx.audioWorklet){
+    let url = null, workletNode = null, workletSink = null;
     try {
-      const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type:'application/javascript' }));
+      url = URL.createObjectURL(new Blob([WORKLET_SRC], { type:'application/javascript' }));
       await actx.audioWorklet.addModule(url);
-      URL.revokeObjectURL(url);
-      capNode = new AudioWorkletNode(actx, 'cap', { numberOfOutputs:0 });
-      capNode.port.onmessage = e => onCaptured(e.data.pcm, e.data.peak, e.data.done);
-      capNode.port.postMessage({ on:false });
+      workletNode = new AudioWorkletNode(actx, 'cap', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1]
+      });
+      workletNode.onprocessorerror = () => {
+        console.warn('AudioWorklet capture processor failed');
+      };
+      workletNode.port.onmessage = e => onCaptured(e.data.pcm, e.data.peak, e.data.done);
+      // A silent downstream connection keeps the worklet rendered without
+      // feeding microphone audio back to the user.
+      workletSink = actx.createGain();
+      workletSink.gain.value = 0;
+      workletNode.connect(workletSink);
+      workletSink.connect(actx.destination);
+      workletNode.port.postMessage({ on:false });
+      capNode = workletNode;
+      capSink = workletSink;
       capIsWorklet = true;
       return;
-    } catch (e){ /* fall through */ }
+    } catch (e){
+      if (workletNode){ try { workletNode.disconnect(); } catch (err) { /* gone */ } }
+      if (workletSink){ try { workletSink.disconnect(); } catch (err) { /* gone */ } }
+      console.warn('AudioWorklet capture unavailable; using ScriptProcessor', e);
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+    }
   }
   // ScriptProcessor fallback
   const sp = actx.createScriptProcessor(4096, 1, 1);
@@ -110,10 +143,10 @@ async function buildCapture(){
     onCaptured(new Float32Array(ch), peak, false);
   };
   // a ScriptProcessor only runs while connected to a destination
-  const sink = actx.createGain();
-  sink.gain.value = 0;
-  sp.connect(sink);
-  sink.connect(actx.destination);
+  capSink = actx.createGain();
+  capSink.gain.value = 0;
+  sp.connect(capSink);
+  capSink.connect(actx.destination);
   capNode = sp;
   capIsWorklet = false;
 }
@@ -127,6 +160,11 @@ function releaseMic(){
     try { capNode.disconnect(); } catch (e) { /* gone */ }
     capNode = null;
   }
+  if (capSink){
+    try { capSink.disconnect(); } catch (e) { /* gone */ }
+    capSink = null;
+  }
+  capIsWorklet = false;
 }
 
 /* ------------------------------------------------------------- capturing */
