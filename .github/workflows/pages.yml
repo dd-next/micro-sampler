@@ -28,18 +28,15 @@ jobs:
         run: for f in src/*.js sw.js scripts/*.js; do node --check "$f"; done
 
       # script tags resolve, the service worker shell is complete, no two
-      # files declare the same global — and writes .eslint-globals.json
+      # files declare the same global, the committed icons still match their
+      # generator — and writes .eslint-globals.json for the lint step.
+      # Icons are compared as pixels: zlib output is not stable across Node
+      # versions, so a byte comparison fails on the runner for no reason.
       - name: static checks
         run: node scripts/check.js
 
       - name: lint
         run: npx --yes eslint@9 src sw.js scripts
-
-      - name: icons are reproducible from source
-        run: |
-          node scripts/make-icons.js
-          git diff --exit-code -- public/ \
-            || (echo "::error::public/ icons differ from scripts/make-icons.js output" && exit 1)
 
   deploy:
     needs: check

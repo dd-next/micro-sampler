@@ -60,7 +60,58 @@ try {
 }
 fs.unlinkSync(tmp);
 
-/* ---- 4. export the project's globals for eslint ---------------------- */
+/* ---- 4. the committed icons still match their generator --------------
+   Compared as decoded pixels, not as files: zlib's output differs between
+   Node versions, so identical images can have different bytes.          */
+const icons = require('./make-icons.js');
+
+function decodePng(buf){
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a png');
+  let at = 8, w = 0, h = 0;
+  const idat = [];
+  while (at < buf.length){
+    const len = buf.readUInt32BE(at);
+    const type = buf.toString('ascii', at + 4, at + 8);
+    const data = buf.subarray(at + 8, at + 8 + len);
+    if (type === 'IHDR'){ w = data.readUInt32BE(0); h = data.readUInt32BE(4); }
+    else if (type === 'IDAT') idat.push(data);
+    else if (type === 'IEND') break;
+    at += 12 + len;
+  }
+  const raw = require('zlib').inflateSync(Buffer.concat(idat));
+  const px = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++){
+    const filter = raw[y * (w * 4 + 1)];
+    if (filter !== 0) throw new Error('unexpected png filter ' + filter);
+    raw.copy(px, y * w * 4, y * (w * 4 + 1) + 1, (y + 1) * (w * 4 + 1));
+  }
+  return { w, h, px };
+}
+
+let iconsOk = true;
+for (const size of icons.SIZES){
+  const file = `public/icon-${size}.png`;
+  if (!fs.existsSync(path.join(ROOT, file))){ fail(`${file} is missing`); iconsOk = false; continue; }
+  try {
+    const got = decodePng(fs.readFileSync(path.join(ROOT, file)));
+    const want = icons.draw(size);
+    if (got.w !== size || got.h !== size){
+      fail(`${file} is ${got.w}x${got.h}, expected ${size}x${size}`); iconsOk = false;
+    } else if (!got.px.equals(want)){
+      let n = 0;
+      for (let i = 0; i < want.length; i++) if (got.px[i] !== want[i]) n++;
+      fail(`${file} differs from scripts/make-icons.js in ${n} bytes — re-run it`);
+      iconsOk = false;
+    }
+  } catch (e){ fail(`${file} could not be decoded: ${e.message}`); iconsOk = false; }
+}
+if (read('public/icon.svg') !== icons.svgSource()){
+  fail('public/icon.svg differs from scripts/make-icons.js — re-run it');
+  iconsOk = false;
+}
+if (iconsOk) pass('icons match their generator, pixel for pixel');
+
+/* ---- 5. export the project's globals for eslint ---------------------- */
 /* Split a declarator list on the commas that separate bindings, ignoring
    commas nested inside an initialiser. `a = 1, b = f(x, y), c` → 3 parts. */
 function splitDeclarators(text){

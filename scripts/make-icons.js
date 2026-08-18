@@ -108,22 +108,32 @@ function draw(size){
   return buf;
 }
 
-for (const size of [192, 512]){
-  fs.writeFileSync(path.join(OUT, `icon-${size}.png`), png(size, size, draw(size)));
-  console.log(`wrote public/icon-${size}.png`);
+const SIZES = [192, 512];
+
+function writeAll(){
+  for (const size of SIZES){
+    fs.writeFileSync(path.join(OUT, `icon-${size}.png`), png(size, size, draw(size)));
+    console.log(`wrote public/icon-${size}.png`);
+  }
+  fs.writeFileSync(path.join(OUT, 'icon.svg'), svgSource());
+  console.log('wrote public/icon.svg');
 }
 
 /* An SVG twin for the browser tab. */
+function svgSource(){
 const cells = [];
 for (let n = 0; n < 16; n++){
   const c = LIT[n];
   const fill = c ? `rgb(${c.join(',')})` : '#1e1e2a';
   cells.push(`<rect x="${(14 + (n % 4) * 19.3).toFixed(1)}" y="${(14 + Math.floor(n / 4) * 19.3).toFixed(1)}" width="14.7" height="14.7" rx="3.8" fill="${fill}"/>`);
 }
-fs.writeFileSync(path.join(OUT, 'icon.svg'),
-`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
 <rect width="100" height="100" rx="18" fill="#0b0b12"/>
 ${cells.join('\n')}
 </svg>
-`);
-console.log('wrote public/icon.svg');
+`;
+}
+
+module.exports = { draw, png, svgSource, writeAll, SIZES };
+
+if (require.main === module) writeAll();
