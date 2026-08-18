@@ -121,10 +121,10 @@ function saveNow(){
 /* --------------------------------------------------------------- load */
 function restore(snap){
   if (!snap || snap.version !== 1) return false;
-  ensureAudio();
 
+  // deliberately no ensureAudio() here — see makeAudioBuffer in audio.js
   const bufs = (snap.buffers || []).map(b => {
-    const ab = actx.createBuffer(1, b.pcm.length, b.rate || actx.sampleRate);
+    const ab = makeAudioBuffer(b.pcm.length, b.rate);
     ab.getChannelData(0).set(b.pcm);
     return ab;
   });

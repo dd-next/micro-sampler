@@ -36,6 +36,17 @@ function fireStep(step, time){
 
 /* Play one hit. `cell` is a pattern cell, or a bare number for live play. */
 function trig(idx, time, cell){
+  /* A user gesture may have started resume(), but Safari completes it
+     asynchronously. Delay the voice until the context is actually running;
+     otherwise a first tap can be consumed while the context is suspended. */
+  if (actx && actx.state !== 'running'){
+    resumeAudio().then(ok => {
+      if (!ok || !actx || actx.state !== 'running') return;
+      trig(idx, Math.max(time, actx.currentTime + 0.005), cell);
+    });
+    return;
+  }
+
   const s = slots[idx];
   const isDrum = idx >= 8;
   const v = typeof cell === 'number' ? cell : (cell && cell.v) || 0;

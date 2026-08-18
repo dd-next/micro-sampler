@@ -7,13 +7,65 @@
 
 let actx = null, masterGain, comp, analyser, noiseBuf;
 let meterData = null;
+let offlineCtx = null;
+let resumePromise = null;
+
+/* Build an AudioBuffer without an AudioContext.
+   iOS gives you a permanently silent context if one is constructed outside a
+   user gesture, so restoring saved samples at page load must not create one.
+   An OfflineAudioContext never touches the audio hardware, and AudioBuffers
+   are not bound to the context that made them. */
+function makeAudioBuffer(length, rate){
+  if (actx) return actx.createBuffer(1, length, rate || actx.sampleRate);
+  if (!offlineCtx){
+    const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    offlineCtx = new OC(1, 1, Math.min(96000, Math.max(8000, rate || 44100)));
+  }
+  return offlineCtx.createBuffer(1, length, rate || offlineCtx.sampleRate);
+}
+
+/* Resume only from a user gesture when possible. Safari returns a promise
+   here, so track it for the first voice and avoid an unhandled rejection when
+   iOS is interrupted. A timeout lets a later gesture retry a stuck resume. */
+function resumeAudio(){
+  if (!actx || actx.state === 'running' || actx.state === 'closed') {
+    return Promise.resolve(true);
+  }
+  if (resumePromise) return resumePromise;
+
+  try {
+    const attempt = Promise.resolve(actx.resume()).then(() => true);
+    const timeout = new Promise(resolve => {
+      setTimeout(() => resolve(false), 1200);
+    });
+    resumePromise = Promise.race([attempt, timeout]).then(ok => {
+      if (!ok) console.warn('AudioContext resume timed out', actx.state);
+      resumePromise = null;
+      return ok;
+    }).catch(err => {
+      console.warn('AudioContext resume failed', err);
+      resumePromise = null;
+      return false;
+    });
+  } catch (err){
+    console.warn('AudioContext resume failed', err);
+    return Promise.resolve(false);
+  }
+  return resumePromise;
+}
 
 function ensureAudio(){
   if (actx){
-    if (actx.state === 'suspended') actx.resume();
+    resumeAudio();
     if (typeof startUiLoop === 'function') startUiLoop();
     return actx;
   }
+  // Safari mutes Web Audio with the physical silent switch unless the page
+  // declares itself a playback session. Harmless everywhere else.
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  } catch (e) { /* not supported */ }
+
   const AC = window.AudioContext || window.webkitAudioContext;
   actx = new AC({ latencyHint:'interactive' });
 
@@ -40,9 +92,42 @@ function ensureAudio(){
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
 
+  unlockIOS();
+  resumeAudio();
   if (typeof startUiLoop === 'function') startUiLoop();
   return actx;
 }
+
+/* iOS only really wakes the output up once something has been played through
+   it from inside a user gesture. One silent sample is enough. */
+function unlockIOS(){
+  try {
+    const b = actx.createBuffer(1, 1, actx.sampleRate);
+    const s = actx.createBufferSource();
+    s.buffer = b;
+    s.connect(actx.destination);
+    s.start(0);
+  } catch (e) { /* nothing to unlock */ }
+}
+
+/* Mobile browsers suspend the context when the tab goes to the background
+   and do not always resume it on return. */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && actx){
+    resumeAudio();
+  }
+});
+
+/* On iOS, pointerdown/touchstart has not been a reliable Web Audio unlock
+   event across Safari versions. The compatibility click/touchend path gives
+   a suspended context another trusted user gesture without changing the
+   low-latency pointer path used by the pads. */
+['touchend', 'click'].forEach(type => {
+  document.addEventListener(type, () => {
+    if (!actx) ensureAudio();
+    else if (actx.state !== 'running') resumeAudio();
+  }, { capture:true, passive:true });
+});
 
 function setMaster(v){
   master = v;
@@ -256,6 +341,7 @@ function playSample(s, o){
     src.start(o.time, start, len);
     autoRelease(src, chain, len / src.playbackRate.value);
   } catch (e){
+    console.warn('sample playback failed', e);
     chain.release();
   }
 }
@@ -268,6 +354,7 @@ function playDrumVoice(ix, ratio, o){
     const v = SDRUM[((ix % 8) + 8) % 8](o.time, 1, chain.input, ratio);
     autoRelease(v.src, chain, v.dur);
   } catch (e){
+    console.warn('drum playback failed', e);
     chain.release();
   }
 }
@@ -277,6 +364,7 @@ function playPluck(freq, o){
     const v = synthPluck(freq, o.time, 1, chain.input);
     autoRelease(v.src, chain, v.dur);
   } catch (e){
+    console.warn('synth playback failed', e);
     chain.release();
   }
 }
