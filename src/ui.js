@@ -132,19 +132,24 @@ function onLeaveMode(m){
   if (m === 'fx') fxAllOff();
   if (m === 'rec'){
     recIntent = null;
-    // Do not tear the microphone down the instant REC is released: on iOS the
-    // permission prompt is still open at that point, and releasing cancels it.
-    // Hand it back after a grace period, once any arming has settled.
     clearTimeout(micReleaseTimer);
-    let waits = 0;
-    micReleaseTimer = setTimeout(function tryRelease(){
-      if (mode === 'rec') return;
-      if (micArming() && waits++ < 20){
-        micReleaseTimer = setTimeout(tryRelease, 500);
-        return;
-      }
+    // Hand the microphone back at once. iOS routes output to the earpiece
+    // while a play-and-record session is open, so lingering in it costs the
+    // speaker. The only reason to wait is a permission prompt still on
+    // screen — releasing then would cancel it.
+    if (!micArming()){
       releaseMic();
-    }, 1500);
+    } else {
+      let waits = 0;
+      micReleaseTimer = setTimeout(function tryRelease(){
+        if (mode === 'rec') return;
+        if (micArming() && waits++ < 20){
+          micReleaseTimer = setTimeout(tryRelease, 500);
+          return;
+        }
+        releaseMic();
+      }, 400);
+    }
   }
 }
 

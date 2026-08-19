@@ -63,6 +63,9 @@ function setAudioSession(type){
   try {
     if (navigator.audioSession && navigator.audioSession.type !== type){
       navigator.audioSession.type = type;
+      // iOS interrupts the running context when the session category changes.
+      // Nothing else notices, so the output would simply go quiet from here.
+      if (actx) resumeAudio();
       return true;
     }
   } catch (e) { /* not supported on this browser */ }
@@ -121,10 +124,22 @@ function ensureAudio(){
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
 
+  watchContextState();
   unlockIOS();
   resumeAudio();
   if (typeof startUiLoop === 'function') startUiLoop();
   return actx;
+}
+
+/* Safari has a fourth state beyond running/suspended/closed: `interrupted`,
+   entered on a phone call, a session change, or the app losing audio focus.
+   It never leaves on its own. Only that state is auto-resumed — a deliberate
+   suspend is left alone. */
+function watchContextState(){
+  if (!actx) return;
+  actx.onstatechange = () => {
+    if (actx && actx.state === 'interrupted') resumeAudio();
+  };
 }
 
 /* iOS only really wakes the output up once something has been played through
