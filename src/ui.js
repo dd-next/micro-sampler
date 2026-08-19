@@ -482,7 +482,7 @@ function selectSlot(i){
   lastSlice = Math.min(lastSlice, 15);
   invalidatePeaks();
   slotLbl.textContent = slotName(i);
-  slotType.textContent = slots[i].type === 'drum' ? 'drum · 16 slices' : 'melodic · chromatic';
+  slotType.textContent = slots[i].type === 'drum' ? '16 slices' : 'chromatic';
   sndLbl.textContent = slotName(i);
   updateNoteLabel();
   syncKnobsFromSlot();
@@ -797,6 +797,30 @@ function doCopy(dstIx){
   updateMem();
   scheduleSave();
 }
+
+/* ============================================================== guide
+   Everything explanatory lives in one dialog instead of sitting in the
+   interface all the time. Native <dialog> gives Esc, focus trapping and a
+   backdrop for free. */
+const guideEl = $('guide');
+
+function openGuide(){
+  if (!guideEl || guideEl.open) return;
+  fxAllOff();
+  if (typeof guideEl.showModal === 'function') guideEl.showModal();
+  else guideEl.setAttribute('open', '');
+}
+function closeGuide(){
+  if (!guideEl || !guideEl.open) return;
+  if (typeof guideEl.close === 'function') guideEl.close();
+  else guideEl.removeAttribute('open');
+}
+function guideOpen(){ return !!(guideEl && guideEl.open); }
+
+$('guideBtn').addEventListener('click', openGuide);
+$('guideClose').addEventListener('click', closeGuide);
+// clicking the backdrop lands on the dialog element itself
+guideEl.addEventListener('click', e => { if (e.target === guideEl) closeGuide(); });
 
 /* ============================================================= UI loop */
 let lastPat = -1, lastDrawStep = -2, rafRunning = false;

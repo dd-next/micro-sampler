@@ -82,11 +82,15 @@ Z X C V     the six modes          ↑ ↓     knob A   (Shift: knob B)
                                    Esc     drop all effects and latches
 ```
 
-Every control is also reachable by `Tab` and operable from the keyboard,
-knobs included.
+Press `?` for the in-app guide. Every control is also reachable by `Tab` and
+operable from the keyboard, knobs included.
 
 ### Where this deliberately differs from the hardware
 
+- The instrument is laid out as one screenful: the sound editor sits under
+  the title, the display above the pads, and the pads take whatever height is
+  left, so nothing scrolls on a phone. Everything explanatory lives in a
+  single guide behind the `?` button rather than in the interface.
 - Tempo, swing and master volume have their own on-screen sliders rather than
   hiding behind `BPM` + knob. `BPM` + keys still sets volume.
 - The parameter page is a visible `TONE / FILTER / TRIM` selector rather than

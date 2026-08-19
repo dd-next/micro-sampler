@@ -15,117 +15,125 @@
 </head>
 <body>
 
-<div class="app">
+<main class="unit" aria-label="Sampler">
 
-  <!-- ============ the instrument ============ -->
-  <main class="unit" aria-label="Sampler">
-
-    <header class="head">
-      <div class="brand">
-        <span class="eyebrow">micro</span>
-        <span class="title">SAMPLER<b>·</b>16</span>
-      </div>
+  <header class="head">
+    <div class="brand">
+      <span class="eyebrow">micro</span>
+      <span class="title">SAMPLER<b>·</b>16</span>
+    </div>
+    <div class="head-r">
       <div class="mem" title="Sample memory">
         <div class="mem-bar"><i id="memFill"></i></div>
-        <span class="mem-txt"><b id="memVal">40.0</b>s free</span>
+        <span class="mem-txt"><b id="memVal">40.0</b>s</span>
       </div>
-    </header>
+      <button class="guide-btn" id="guideBtn" type="button" aria-haspopup="dialog"
+              title="Guide (press ?)">?</button>
+    </div>
+  </header>
 
-    <!-- ============ LCD ============ -->
-    <section class="lcd" aria-live="polite">
-      <div class="lcd-row1">
-        <span class="mode" id="modeLbl">KEYS</span>
-        <span class="fld"><i>snd</i><b id="sndLbl">M1</b></span>
-        <span class="fld"><i>pat</i><b id="patLbl">1</b></span>
-        <span class="fld"><i>note</i><b id="noteLbl">C</b></span>
-        <span class="bpm"><b id="bpmVal">120</b><i>bpm</i></span>
+  <!-- ============ sample editor ============ -->
+  <section class="card">
+    <div class="card-h">
+      <div class="t">snd <b id="slotLbl">M1</b> <i id="slotType">melodic</i></div>
+      <div class="pages" role="tablist" aria-label="Parameter page">
+        <button class="pg on" data-page="tone"   role="tab" type="button">tone</button>
+        <button class="pg"    data-page="filter" role="tab" type="button">filter</button>
+        <button class="pg"    data-page="trim"   role="tab" type="button">trim</button>
       </div>
-      <div class="lcd-dots" id="dots" aria-hidden="true"></div>
-      <div class="lcd-row3">
-        <span class="chain" id="chainLbl">chain 1</span>
-        <span class="msg" id="msgLbl">hold a mode button, or tap to latch</span>
-        <span class="lvl" aria-hidden="true"><i id="lvlFill"></i></span>
-      </div>
-    </section>
+    </div>
 
-    <!-- ============ 4x4 keys ============ -->
-    <section class="grid" id="grid" role="group" aria-label="16 keys"></section>
-
-    <!-- ============ mode buttons ============ -->
-    <nav class="modes" aria-label="Modes">
-      <button class="mbtn" data-mod="sound"   type="button"><span>sound</span><kbd>5</kbd></button>
-      <button class="mbtn" data-mod="pattern" type="button"><span>pattern</span><kbd>6</kbd></button>
-      <button class="mbtn" data-mod="write"   type="button"><span>write</span><kbd>7</kbd></button>
-      <button class="mbtn" data-mod="fx"      type="button"><span>fx</span><kbd>8</kbd></button>
-      <button class="mbtn rec" data-mod="rec" type="button"><span>rec</span><kbd>9</kbd></button>
-      <button class="mbtn" data-mod="bpm"     type="button"><span>bpm</span><kbd>0</kbd></button>
-    </nav>
-
-    <!-- ============ sample editor ============ -->
-    <section class="card">
-      <div class="card-h">
-        <div class="t">sound <b id="slotLbl">M1</b> <i id="slotType">melodic</i></div>
-        <div class="pages" role="tablist" aria-label="Parameter page">
-          <button class="pg on" data-page="tone"   role="tab" type="button">tone</button>
-          <button class="pg"    data-page="filter" role="tab" type="button">filter</button>
-          <button class="pg"    data-page="trim"   role="tab" type="button">trim</button>
-        </div>
-      </div>
-
+    <div class="card-b">
       <canvas class="wave" id="wave" aria-label="Waveform"></canvas>
-
       <div class="knobs">
         <div class="knob" id="knobA"></div>
         <div class="knob" id="knobB"></div>
         <div class="kmeta">
-          <button class="mini" id="clrSamp"    type="button" title="Delete this sound">del snd</button>
-          <button class="mini" id="revBtn"     type="button" title="Reverse this sound">reverse</button>
-          <button class="mini" id="resliceBtn" type="button" title="Reset drum slices to 16 even pieces">re-slice</button>
-          <button class="mini" id="copyBtn"    type="button" title="Copy this sound to another slot">copy →</button>
+          <button class="mini" id="clrSamp"    type="button" title="Delete this sound">del</button>
+          <button class="mini" id="revBtn"     type="button" title="Reverse this sound">rev</button>
+          <button class="mini" id="resliceBtn" type="button" title="Reset drum slices to 16 even pieces">slice</button>
+          <button class="mini" id="copyBtn"    type="button" title="Copy this sound to another slot">copy</button>
         </div>
       </div>
-
-      <p class="warn" id="warn"></p>
-    </section>
-
-    <!-- ============ transport ============ -->
-    <div class="bar">
-      <button class="btn play" id="play" type="button">▶&nbsp; PLAY</button>
-      <button class="btn live" id="live" type="button">● LIVE</button>
-      <button class="btn" id="clr" type="button">CLR</button>
     </div>
 
-    <div class="bar2">
-      <button class="tempo" id="tempo" type="button"><span id="tempoName">DISCO</span><b id="tempoBpm">120</b></button>
-      <div class="slid">
-        <label class="sl" for="bpm"><span>tempo</span><b id="bpmV2">120</b></label>
-        <input type="range" class="rng amber" id="bpm" min="60" max="240" value="120" step="1">
-      </div>
-      <div class="slid">
-        <label class="sl" for="swing"><span>swing</span><b id="swingV">0</b></label>
-        <input type="range" class="rng amber" id="swing" min="0" max="60" value="0" step="1">
-      </div>
-      <div class="slid">
-        <label class="sl" for="master"><span>volume</span><b id="masterV">90</b></label>
-        <input type="range" class="rng" id="master" min="0" max="100" value="90" step="1">
-      </div>
-    </div>
-  </main>
+    <p class="warn" id="warn"></p>
+  </section>
 
-  <!-- ============ side panel ============ -->
-  <aside class="side">
-    <details class="doc" open>
-      <summary>quick start</summary>
+  <!-- ============ LCD ============ -->
+  <section class="lcd" aria-live="polite">
+    <div class="lcd-row1">
+      <span class="mode" id="modeLbl">KEYS</span>
+      <span class="fld"><i>snd</i><b id="sndLbl">M1</b></span>
+      <span class="fld"><i>pat</i><b id="patLbl">1</b></span>
+      <span class="fld"><i>note</i><b id="noteLbl">C</b></span>
+      <span class="bpm"><b id="bpmVal">120</b><i>bpm</i></span>
+    </div>
+    <div class="lcd-dots" id="dots" aria-hidden="true"></div>
+    <div class="lcd-row3">
+      <span class="chain" id="chainLbl">chain 1</span>
+      <span class="msg" id="msgLbl">hold a mode button, or tap to latch</span>
+      <span class="lvl" aria-hidden="true"><i id="lvlFill"></i></span>
+    </div>
+  </section>
+
+  <!-- ============ 4x4 keys ============ -->
+  <section class="grid" id="grid" role="group" aria-label="16 keys"></section>
+
+  <!-- ============ mode buttons ============ -->
+  <nav class="modes" aria-label="Modes">
+    <button class="mbtn" data-mod="sound"   type="button"><span>sound</span><kbd>5</kbd></button>
+    <button class="mbtn" data-mod="pattern" type="button"><span>pattern</span><kbd>6</kbd></button>
+    <button class="mbtn" data-mod="write"   type="button"><span>write</span><kbd>7</kbd></button>
+    <button class="mbtn" data-mod="fx"      type="button"><span>fx</span><kbd>8</kbd></button>
+    <button class="mbtn rec" data-mod="rec" type="button"><span>rec</span><kbd>9</kbd></button>
+    <button class="mbtn" data-mod="bpm"     type="button"><span>bpm</span><kbd>0</kbd></button>
+  </nav>
+
+  <!-- ============ transport ============ -->
+  <div class="bar">
+    <button class="btn play" id="play" type="button">▶&nbsp; PLAY</button>
+    <button class="btn live" id="live" type="button">● LIVE</button>
+    <button class="btn" id="clr" type="button">CLR</button>
+  </div>
+
+  <div class="bar2">
+    <button class="tempo" id="tempo" type="button"><span id="tempoName">DISCO</span><b id="tempoBpm">120</b></button>
+    <div class="slid">
+      <label class="sl" for="bpm"><span>tempo</span><b id="bpmV2">120</b></label>
+      <input type="range" class="rng amber" id="bpm" min="60" max="240" value="120" step="1">
+    </div>
+    <div class="slid">
+      <label class="sl" for="swing"><span>swing</span><b id="swingV">0</b></label>
+      <input type="range" class="rng amber" id="swing" min="0" max="60" value="0" step="1">
+    </div>
+    <div class="slid">
+      <label class="sl" for="master"><span>volume</span><b id="masterV">90</b></label>
+      <input type="range" class="rng" id="master" min="0" max="100" value="90" step="1">
+    </div>
+  </div>
+</main>
+
+<!-- ============ everything explanatory, behind one button ============ -->
+<dialog class="guide" id="guide" aria-label="Guide">
+  <div class="guide-head">
+    <span class="guide-title">micro sampler — guide</span>
+    <button class="guide-x" id="guideClose" type="button" aria-label="Close">×</button>
+  </div>
+
+  <div class="guide-body">
+    <section>
+      <h3>quick start</h3>
       <ol class="steps">
         <li>Hold <b>REC</b> and hold a key <b>1–16</b> — the mic records for as long as you hold it. Slots 1–8 are melodic, 9–16 are drum.</li>
         <li>Release. The sound is assigned and you are back in <b>KEYS</b>. Play it: melodic keys are a chromatic scale, drum keys are 16 slices.</li>
         <li>Hit <b>PLAY</b>, hold <b>WRITE</b> and punch keys in time — notes quantize to the grid.</li>
         <li>Hold <b>FX</b> and hold a key for a punch-in effect.</li>
       </ol>
-    </details>
+    </section>
 
-    <details class="doc">
-      <summary>modes</summary>
+    <section>
+      <h3>modes</h3>
       <dl class="defs">
         <dt>KEYS</dt><dd>Default. Plays the selected sound.</dd>
         <dt>SOUND</dt><dd>+ key selects one of 16 sounds.</dd>
@@ -133,13 +141,13 @@
         <dt>WRITE</dt><dd>Stopped: keys are the 16 steps, tap to toggle. Playing: keys punch in, quantized. Hold WRITE and turn a knob to lock that parameter to the current step.</dd>
         <dt>FX</dt><dd>+ key applies a punch-in effect while held. With WRITE also active, the effect is saved into the pattern.</dd>
         <dt>REC</dt><dd>+ key records into that slot for as long as it is held.</dd>
-        <dt>BPM</dt><dd>+ key sets master volume in 16 steps.</dd>
+        <dt>BPM</dt><dd>Keys 1–16 set master volume.</dd>
       </dl>
       <p class="note">Tap a mode button to latch it, or hold it down as a modifier — both work, on touch and mouse alike.</p>
-    </details>
+    </section>
 
-    <details class="doc">
-      <summary>keyboard</summary>
+    <section>
+      <h3>keyboard</h3>
       <div class="kbmap" id="kbmap"></div>
       <dl class="defs tight">
         <dt>1 2 3 4 / Q W E R / A S D F / Z X C V</dt><dd>the 16 keys</dd>
@@ -150,21 +158,22 @@
         <dt>↑ ↓ &nbsp;·&nbsp; Shift+↑ ↓</dt><dd>knob A · knob B</dd>
         <dt>[ ]</dt><dd>tempo −/+</dd>
         <dt>L</dt><dd>live record toggle</dd>
-        <dt>Esc</dt><dd>drop all effects and latches</dd>
+        <dt>?</dt><dd>this guide</dd>
+        <dt>Esc</dt><dd>close it, or drop all effects and latches</dd>
       </dl>
-    </details>
+    </section>
 
-    <details class="doc">
-      <summary>effects</summary>
+    <section>
+      <h3>effects</h3>
       <ol class="fxlist" id="fxlist"></ol>
-    </details>
+    </section>
 
     <p class="foot">
       Everything stays on this device — samples and patterns are saved to IndexedDB in your
       browser and never uploaded. <a href="#" class="lnk" id="resetLnk">erase everything</a>
     </p>
-  </aside>
-</div>
+  </div>
+</dialog>
 
 <script src="src/state.js"></script>
 <script src="src/audio.js"></script>

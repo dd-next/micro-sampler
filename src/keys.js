@@ -32,6 +32,11 @@ function typingTarget(){
 
 window.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  if (e.key === '?'){ e.preventDefault(); openGuide(); return; }
+  // the dialog handles its own Escape; nothing else should reach the pads
+  if (guideOpen()) return;
+
   if (typingTarget() && e.key !== 'Escape') return;
   if (pressed.has(e.code)) return;          // ignore auto-repeat
 
