@@ -62,6 +62,9 @@ registerProcessor('cap', Cap);
 `;
 
 let micStream = null, micSource = null, capNode = null, capSink = null, capIsWorklet = false;
+let micGeneration = 0;      // bumped by every release, so a stale arm can tell
+let arming = null;          // in-flight armMic promise, shared by all callers
+let lastMicError = null;
 let recState = 'idle';            // idle | recording | stopping
 let recSlot = null, recChunks = [], recCount = 0, recLimit = 0;
 let recPeak = 0, recCapTimer = null;
@@ -75,28 +78,77 @@ function recSeconds(){
 function recPeakLevel(){ const p = recPeak; recPeak = 0; return p; }
 
 /* ------------------------------------------------------------ mic setup */
-async function armMic(){
-  if (micStream) return true;
-  ensureAudio();
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    throw new Error('no-getusermedia');
-  }
-  micStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation:false,
-      noiseSuppression:false,
-      autoGainControl:false,
-      channelCount:1
-    }
-  });
-  // The permission prompt is asynchronous. Retry the context resume after it
-  // closes so iOS does not leave the capture graph suspended.
-  await resumeAudio();
-  micSource = actx.createMediaStreamSource(micStream);
-  await buildCapture();
-  micSource.connect(capNode);
-  return true;
+/* Safari is fussy about capture constraints and will reject the whole
+   request rather than relax one it cannot meet, so ask for the ideal shape
+   first and step down to plain `audio: true`. A refusal is final — retrying
+   would only re-prompt. */
+const MIC_CONSTRAINTS = [
+  { audio: { echoCancellation:false, noiseSuppression:false,
+             autoGainControl:false, channelCount:1 } },
+  { audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } },
+  { audio: true }
+];
+
+function isFinalRefusal(err){
+  return !!err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
 }
+
+async function getMicStream(){
+  let last = null;
+  for (const constraints of MIC_CONSTRAINTS){
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err){
+      last = err;
+      if (isFinalRefusal(err)) throw err;
+      console.warn('getUserMedia rejected', err && err.name, constraints);
+    }
+  }
+  throw last || new Error('getUserMedia failed');
+}
+
+/* Arming is shared and cancellable. `releaseMic` bumps the generation, so a
+   request still waiting on the permission prompt when the user leaves REC
+   cannot come back later and quietly reopen the microphone. */
+function armMic(){
+  if (micStream) return Promise.resolve(true);
+  if (arming) return arming;
+
+  const gen = ++micGeneration;
+  arming = (async () => {
+    ensureAudio();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      const e = new Error('getUserMedia is not available');
+      e.name = window.isSecureContext ? 'NotSupportedError' : 'InsecureContextError';
+      throw e;
+    }
+
+    const stream = await getMicStream();
+    if (gen !== micGeneration){
+      stream.getTracks().forEach(t => t.stop());
+      const e = new Error('cancelled'); e.name = 'AbortError'; throw e;
+    }
+    micStream = stream;
+
+    // the permission prompt suspends the context on iOS
+    await resumeAudio();
+    micSource = actx.createMediaStreamSource(micStream);
+    await buildCapture();
+    if (gen !== micGeneration){
+      const e = new Error('cancelled'); e.name = 'AbortError'; throw e;
+    }
+    micSource.connect(capNode);
+    lastMicError = null;
+    return true;
+  })();
+
+  const settle = () => { if (gen === micGeneration) arming = null; };
+  arming.then(settle, err => { settle(); lastMicError = err; });
+  return arming;
+}
+
+function micArming(){ return !!arming; }
+function micLastError(){ return lastMicError; }
 
 async function buildCapture(){
   // AudioWorklet first — off the main thread, so UI work cannot drop samples
@@ -152,7 +204,9 @@ async function buildCapture(){
 }
 
 function releaseMic(){
-  if (recSlot != null) stopRec(true);
+  micGeneration++;            // invalidates an arm that is still in flight
+  arming = null;
+  if (recState !== 'idle') stopRec(true);
   if (micSource){ try { micSource.disconnect(); } catch (e) { /* gone */ } micSource = null; }
   if (micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   if (capNode){

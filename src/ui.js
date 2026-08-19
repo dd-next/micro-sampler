@@ -119,8 +119,8 @@ function paintModeButtons(){
 
 function onEnterMode(m){
   if (m === 'rec'){
-    armMic().then(() => { warn(''); msg('hold a key to sample'); })
-            .catch(showMicError);
+    clearTimeout(micReleaseTimer);
+    armMicWithFeedback();
   }
   if (m === 'pattern') msg('hold and press keys to chain');
   if (m === 'fx') msg('hold a key for an effect');
@@ -130,8 +130,33 @@ function onEnterMode(m){
 }
 function onLeaveMode(m){
   if (m === 'fx') fxAllOff();
-  if (m === 'rec'){ releaseMic(); recIntent = null; }
+  if (m === 'rec'){
+    recIntent = null;
+    // Do not tear the microphone down the instant REC is released: on iOS the
+    // permission prompt is still open at that point, and releasing cancels it.
+    // Hand it back after a grace period, once any arming has settled.
+    clearTimeout(micReleaseTimer);
+    let waits = 0;
+    micReleaseTimer = setTimeout(function tryRelease(){
+      if (mode === 'rec') return;
+      if (micArming() && waits++ < 20){
+        micReleaseTimer = setTimeout(tryRelease, 500);
+        return;
+      }
+      releaseMic();
+    }, 1500);
+  }
 }
+
+/* Safari has not consistently treated `pointerdown` as the kind of user
+   gesture that unlocks media capture — the same quirk the AudioContext has to
+   work around. While REC is waiting for a microphone that never arrived, take
+   the next touchend or click as a fresh gesture and ask again. */
+['touchend', 'click'].forEach(type => {
+  document.addEventListener(type, () => {
+    if (mode === 'rec' && !micActive() && !micArming()) armMicWithFeedback();
+  }, { capture:true, passive:true });
+});
 
 function modDown(m){
   ensureAudio();
@@ -292,15 +317,71 @@ function fxKey(i, el){
 
 /* ---------------------------------------------------------------- REC */
 let recIntent = null;
+let micReleaseTimer = null;
+let micArmTimer = null;
+
+/* Ask for the microphone and report what happens where it can be seen.
+   The old code only wrote failures into the warning box inside the sample
+   card, which on a phone is well below the fold — so a refusal looked
+   identical to a hang. */
+function armMicWithFeedback(){
+  if (micActive()){ warn(''); msg('hold a key to sample'); return; }
+  msg('opening the microphone…');
+  clearTimeout(micArmTimer);
+  micArmTimer = setTimeout(() => {
+    if (!micActive() && mode === 'rec'){
+      msg('no answer from the microphone — tap REC again');
+      warn('Safari never answered the microphone request. Tap <b>REC</b> again, ' +
+           'or reload the page. If no permission prompt appeared, open <b>aA</b> in ' +
+           'the address bar → <b>Website Settings</b> → <b>Microphone</b> → <b>Ask</b>, ' +
+           'then reload.');
+    }
+  }, 8000);
+
+  return armMic()
+    .then(() => {
+      clearTimeout(micArmTimer);
+      warn('');
+      if (mode === 'rec') msg('hold a key to sample');
+      return true;
+    })
+    .catch(err => {
+      clearTimeout(micArmTimer);
+      showMicError(err);
+      return false;
+    });
+}
+
 function recKeyDown(i){
-  if (!micActive()){ msg('waiting for the microphone…'); return; }
   if (memFree() < 0.1){ msg('memory full — delete a sound'); return; }
   recIntent = i;
-  if (startRec(i)){ renderGrid(); msg('sampling into ' + slotName(i) + '…'); }
+
+  if (micActive()){ beginRec(i); return; }
+
+  // not armed yet — this tap is itself a fresh user gesture, so try again and
+  // start the moment it is ready, provided the key is still held
+  armMicWithFeedback().then(ok => {
+    if (ok && recIntent === i) beginRec(i);
+    else if (!ok) recIntent = null;
+    renderGrid();
+  });
+  renderGrid();
 }
+
+function beginRec(i){
+  if (startRec(i)){ renderGrid(); msg('sampling into ' + slotName(i) + '…'); }
+  else { msg('could not start recording'); recIntent = null; }
+}
+
 function recKeyUp(i){
   if (recIntent !== i) return;
   recIntent = null;
+  if (recActiveSlot() == null){
+    // released before the microphone came up
+    if (micActive()) msg('too short — hold the key down');
+    renderGrid();
+    return;
+  }
   // the capture node flushes asynchronously, so the take lands a moment later
   stopRec().then(r => {
     if (r === 'ok'){
@@ -317,15 +398,51 @@ function recKeyUp(i){
     updateMem();
   });
 }
+const MIC_ERRORS = {
+  NotAllowedError: {
+    lcd: 'microphone blocked for this site',
+    warn: 'Safari is refusing the microphone for this page. Tap <b>aA</b> in the ' +
+          'address bar → <b>Website Settings</b> → <b>Microphone</b> → <b>Allow</b>, ' +
+          'then reload. A system-wide permission in Settings is not enough — Safari ' +
+          'also keeps a per-site one.'
+  },
+  NotFoundError: {
+    lcd: 'no microphone found',
+    warn: 'No audio input device is available on this device.'
+  },
+  NotReadableError: {
+    lcd: 'microphone is busy elsewhere',
+    warn: 'Another app or tab is holding the microphone. Close it and tap <b>REC</b> again.'
+  },
+  OverconstrainedError: {
+    lcd: 'microphone settings unsupported',
+    warn: 'This microphone rejected every capture format offered. Please report this ' +
+          'along with your device and iOS version.'
+  },
+  InsecureContextError: {
+    lcd: 'microphone needs https',
+    warn: 'Microphone capture needs a secure context. Open the page over <code>https</code>, ' +
+          'or serve it on <code>localhost</code>.'
+  },
+  NotSupportedError: {
+    lcd: 'this browser cannot record',
+    warn: 'This browser does not expose <code>getUserMedia</code>. Everything else works — ' +
+          'empty slots play synth voices.'
+  }
+};
+
 function showMicError(err){
-  const secure = window.isSecureContext;
-  if (!secure){
-    warn('Microphone needs a secure context. Serve over <code>https</code>, or run ' +
-         '<code>python3 -m http.server</code> and open <code>http://localhost:8000</code>.');
-  } else if (err && err.name === 'NotAllowedError'){
-    warn('Microphone permission was denied. Allow it in your browser’s site settings, then press REC again.');
+  if (err && err.name === 'AbortError') return;      // we cancelled it ourselves
+  const name = (err && err.name) || 'Error';
+  const known = MIC_ERRORS[name];
+  if (known){
+    msg(known.lcd, 5000);
+    warn(known.warn);
   } else {
-    warn('No microphone available. Everything else works — empty slots play synth voices.');
+    msg('microphone failed: ' + name, 5000);
+    warn('The microphone could not be opened (<code>' + name + '</code>' +
+         (err && err.message ? ': ' + String(err.message).slice(0, 120) : '') +
+         '). Everything else works — empty slots play synth voices.');
   }
 }
 
@@ -516,8 +633,8 @@ function renderGrid(){
         t = slotName(i);
         el.classList.add(i < 8 ? 'mel' : 'drum');
         if (slots[i].buffer) el.classList.add('loaded');
-        if (recActiveSlot() === i) el.classList.add('recing');
-        st = slots[i].buffer ? 'replace' : 'empty';
+        if (recActiveSlot() === i || (recIntent === i && !micActive())) el.classList.add('recing');
+        st = recIntent === i && !micActive() ? 'wait…' : (slots[i].buffer ? 'replace' : 'empty');
         break;
 
       case 'bpm':
