@@ -358,7 +358,7 @@ function armMicWithFeedback(){
 }
 
 function recKeyDown(i){
-  if (memFree() < 0.1){ msg('memory full — delete a sound'); return; }
+  if (memFreeFor(i) < 0.1){ msg('memory full — delete a sound'); return; }
   recIntent = i;
 
   if (micActive()){ beginRec(i); return; }
@@ -553,10 +553,13 @@ function knobChanged(def, v){
 
 function buildKnobs(){
   const mk = (el, side) => {
+    // The knobs are built once and reconfigured on every page change, so the
+    // handler has to read the definition when it fires. Capturing it here
+    // would nail both knobs to whatever page was current at boot.
     const def = KNOB_DEFS[page][side];
     return makeKnob(el, Object.assign({}, def, {
       def: def.def,
-      onInput: v => knobChanged(def, v),
+      onInput: v => knobChanged(KNOB_DEFS[page][side], v),
       onGesture: on => { knobGesture = on; }
     }));
   };
@@ -847,8 +850,9 @@ function uiLoop(){
   lvlFill.style.width = Math.min(100, lvl * 130).toFixed(0) + '%';
 
   if (recActiveSlot() != null){
-    memVal.textContent = Math.max(0, memFree() - recSeconds()).toFixed(1);
-    memFill.style.width = (Math.max(0, memFree() - recSeconds()) / MEM_SECONDS * 100).toFixed(1) + '%';
+    const left = Math.max(0, memFreeFor(recActiveSlot()) - recSeconds());
+    memVal.textContent = left.toFixed(1);
+    memFill.style.width = (left / MEM_SECONDS * 100).toFixed(1) + '%';
   }
 }
 /* Called by ensureAudio — the loop can only run once there is a clock. */
