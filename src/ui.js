@@ -611,7 +611,7 @@ function renderGrid(){
         el.classList.add(i < 8 ? 'mel' : 'drum');
         if (slots[i].buffer) el.classList.add('loaded');
         if (i === sel) el.classList.add('sel');
-        st = slots[i].buffer ? slots[i].buffer.duration.toFixed(1) + 's' : 'synth';
+        st = slots[i].buffer ? slots[i].buffer.duration.toFixed(1) + 's' : voiceName(i);
         break;
 
       case 'pattern': {

@@ -47,8 +47,11 @@ and a UI that behaves like an instrument rather than a web page.
 - **Everything persists** to IndexedDB on your device, and nothing is ever
   uploaded.
 - **Installs as a PWA** and works offline.
-- Empty slots play synthesised drum and pluck voices, so the instrument is
-  playable before you have sampled anything.
+- Empty slots play synthesised voices, so the instrument is playable before
+  you have sampled anything: the eight melodic slots each have their own
+  timbre (pluck, bass, e.piano, organ, saw, bell, strings, blip) and the
+  eight drum slots each have their own sixteen-piece kit (909, 808, tight,
+  room, perc, hi, deep, wire). The pad shows which one you are on.
 
 ## Controls
 

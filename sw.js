@@ -1,6 +1,6 @@
 /* Cache the shell so the instrument opens offline once visited.
    Bump CACHE when any of these files change. */
-const CACHE = 'micro-sampler-v10';
+const CACHE = 'micro-sampler-v11';
 
 const SHELL = [
   './',

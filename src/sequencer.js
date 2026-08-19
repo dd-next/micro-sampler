@@ -83,13 +83,13 @@ function trig(idx, time, cell){
     const o = { vol, cut, res, time };
     if (isDrum){
       const ratio = Math.pow(2, tune / 12) * oct;
-      playDrumVoice(v, ratio, o);
-      if (unison) playDrumVoice(v, ratio * (unison === 1 ? 1.008 : 0.5),
+      playDrumVoice(idx, v, ratio, o);
+      if (unison) playDrumVoice(idx, v, ratio * (unison === 1 ? 1.008 : 0.5),
                                 Object.assign({}, o, { vol: vol * 0.6 }));
     } else {
       const f = noteFreq(v + tune) * oct;
-      playPluck(f, o);
-      if (unison) playPluck(f * (unison === 1 ? 1.008 : 0.5),
+      playPluck(idx, f, o);
+      if (unison) playPluck(idx, f * (unison === 1 ? 1.008 : 0.5),
                             Object.assign({}, o, { vol: vol * 0.6 }));
     }
   }
@@ -165,4 +165,8 @@ function stopSeq(){
   drawStepIx = -1;
   queue.length = 0;
   setStepFX(null);
+  // STOP means silence: voices already sounding — including hand-played
+  // hits the transport never scheduled — are cut here, not left to run
+  // on until their sample ends.
+  stopAllVoices();
 }

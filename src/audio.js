@@ -197,14 +197,16 @@ function noise(){
   return s;
 }
 
-/* Percussive envelope.
+/* Percussive envelope. `atk` defaults to a 5 ms click; a longer one turns
+   the same helper into a swell for the sustained voices.
    `pk` is clamped away from zero: exponentialRampToValueAtTime(0) throws a
    RangeError, and a throw inside the scheduler stalls the transport. */
-function env(g, t, pk, decay){
+function env(g, t, pk, decay, atk){
   const peak = Math.max(0.0002, pk);
+  const a = atk === undefined ? 0.005 : atk;
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(peak, t + 0.005);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+  g.gain.exponentialRampToValueAtTime(peak, t + a);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(decay, a + 0.01));
 }
 
 /* --------------------------------------------------------- filter model
@@ -254,99 +256,331 @@ function makeChain(vol, cut, res){
   };
 }
 
+/* Every voice that is still sounding. A hit played by hand outlives the
+   step that fired it, so STOP needs a list of what is running rather than
+   only the scheduler's future notes. */
+const liveVoices = new Set();
+
 /* Tear the chain down once the source that feeds it has finished. */
 function autoRelease(src, chain, fallbackSeconds){
   let done = false;
-  const kill = () => { if (done) return; done = true; chain.release(); };
+  const voice = { src, chain };
+  const kill = () => {
+    if (done) return;
+    done = true;
+    liveVoices.delete(voice);
+    chain.release();
+  };
+  liveVoices.add(voice);
   src.onended = kill;
   // onended is not guaranteed to fire if the context is closed mid-flight
   setTimeout(kill, Math.max(0.2, fallbackSeconds) * 1000 + 400);
 }
 
+/* Silence the instrument. Each voice is faded over a few milliseconds
+   instead of cut dead, so stopping in the middle of a sample does not
+   click; the stop itself then fires onended and releases the chain.
+   A voice scheduled for later is stopped before its start time, which
+   means it never sounds at all. */
+function stopAllVoices(){
+  if (!actx) return;
+  const t = actx.currentTime;
+  liveVoices.forEach(v => {
+    try {
+      const g = v.chain.gain.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(0.0001, t + 0.012);
+    } catch (e) { /* chain already released */ }
+    try { v.src.stop(t + 0.02); } catch (e) { /* already stopped */ }
+  });
+}
+
 /* ------------------------------------------------- synth fallback voices
-   Used by any slot that has no sample yet, so the instrument is playable
-   the moment it loads. `r` is the tuning ratio.                        */
-function sKick(t, v, into, r){
+   Used by any slot that has no sample yet, so the instrument is playable —
+   and varied — the moment it loads. Each melodic slot has its own timbre
+   and each drum slot its own kit, so an empty machine is still worth
+   playing. `r` is the tuning ratio, `d` scales the decay.              */
+
+/* --------------------------------------------------------- drum voices */
+function sKick(t, v, into, r, d){
   const o = actx.createOscillator(), g = actx.createGain();
   o.frequency.setValueAtTime(150 * r, t);
-  o.frequency.exponentialRampToValueAtTime(48 * r, t + 0.11);
-  env(g, t, v, 0.35);
+  o.frequency.exponentialRampToValueAtTime(48 * r, t + 0.11 * d);
+  env(g, t, v, 0.35 * d);
   o.connect(g).connect(into);
-  o.start(t); o.stop(t + 0.4);
-  return { src:o, dur:0.4 };
+  o.start(t); o.stop(t + 0.4 * d);
+  return { src:o, dur:0.4 * d };
 }
-function sSnare(t, v, into, r){
+function sSnare(t, v, into, r, d){
   const s = noise(), bp = actx.createBiquadFilter(), g = actx.createGain();
   bp.type = 'bandpass'; bp.frequency.value = 1800 * r;
-  env(g, t, v * 0.8, 0.18);
+  env(g, t, v * 0.8, 0.18 * d);
   s.connect(bp).connect(g).connect(into);
-  s.start(t); s.stop(t + 0.2);
-  return { src:s, dur:0.2 };
+  s.start(t); s.stop(t + 0.2 * d);
+  return { src:s, dur:0.2 * d };
 }
-function sHatC(t, v, into, r){
+function sHatC(t, v, into, r, d){
   const s = noise(), hp = actx.createBiquadFilter(), g = actx.createGain();
   hp.type = 'highpass'; hp.frequency.value = 7000 * r;
-  env(g, t, v * 0.5, 0.05);
+  env(g, t, v * 0.5, 0.05 * d);
   s.connect(hp).connect(g).connect(into);
-  s.start(t); s.stop(t + 0.06);
-  return { src:s, dur:0.06 };
+  s.start(t); s.stop(t + 0.06 * d);
+  return { src:s, dur:0.06 * d };
 }
-function sHatO(t, v, into, r){
+function sHatO(t, v, into, r, d){
   const s = noise(), hp = actx.createBiquadFilter(), g = actx.createGain();
   hp.type = 'highpass'; hp.frequency.value = 7000 * r;
-  env(g, t, v * 0.5, 0.3);
+  env(g, t, v * 0.5, 0.3 * d);
   s.connect(hp).connect(g).connect(into);
-  s.start(t); s.stop(t + 0.32);
-  return { src:s, dur:0.32 };
+  s.start(t); s.stop(t + 0.32 * d);
+  return { src:s, dur:0.32 * d };
 }
-function sClap(t, v, into, r){
+function sClap(t, v, into, r, d){
   const s = noise(), bp = actx.createBiquadFilter(), g = actx.createGain();
   bp.type = 'bandpass'; bp.frequency.value = 1200 * r;
-  env(g, t, v * 0.7, 0.16);
+  env(g, t, v * 0.7, 0.16 * d);
   s.connect(bp).connect(g).connect(into);
-  s.start(t); s.stop(t + 0.18);
-  return { src:s, dur:0.18 };
+  s.start(t); s.stop(t + 0.18 * d);
+  return { src:s, dur:0.18 * d };
 }
-function sTom(t, v, into, r){
+function sTom(t, v, into, r, d){
   const o = actx.createOscillator(), g = actx.createGain();
   o.frequency.setValueAtTime(160 * r, t);
-  o.frequency.exponentialRampToValueAtTime(90 * r, t + 0.15);
-  env(g, t, v * 0.7, 0.25);
+  o.frequency.exponentialRampToValueAtTime(90 * r, t + 0.15 * d);
+  env(g, t, v * 0.7, 0.25 * d);
   o.connect(g).connect(into);
-  o.start(t); o.stop(t + 0.3);
-  return { src:o, dur:0.3 };
+  o.start(t); o.stop(t + 0.3 * d);
+  return { src:o, dur:0.3 * d };
 }
-function sRim(t, v, into, r){
+function sRim(t, v, into, r, d){
   const s = noise(), bp = actx.createBiquadFilter(), g = actx.createGain();
   bp.type = 'bandpass'; bp.frequency.value = 1700 * r; bp.Q.value = 3;
-  env(g, t, v * 0.5, 0.04);
+  env(g, t, v * 0.5, 0.04 * d);
   s.connect(bp).connect(g).connect(into);
-  s.start(t); s.stop(t + 0.05);
-  return { src:s, dur:0.05 };
+  s.start(t); s.stop(t + 0.05 * d);
+  return { src:s, dur:0.05 * d };
 }
-function sCow(t, v, into, r){
+function sCow(t, v, into, r, d){
   let last = null;
   [540, 800].forEach(f => {
     const o = actx.createOscillator(), g = actx.createGain();
     o.type = 'square'; o.frequency.value = f * r;
-    env(g, t, v * 0.25, 0.2);
+    env(g, t, v * 0.25, 0.2 * d);
     o.connect(g).connect(into);
-    o.start(t); o.stop(t + 0.22);
+    o.start(t); o.stop(t + 0.22 * d);
     last = o;
   });
-  return { src:last, dur:0.22 };
+  return { src:last, dur:0.22 * d };
 }
-const SDRUM = [sKick, sSnare, sHatC, sHatO, sClap, sTom, sRim, sCow];
+/* A short kick with the click left in — sits on top of a pattern rather
+   than under it. */
+function sKick2(t, v, into, r, d){
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.frequency.setValueAtTime(320 * r, t);
+  o.frequency.exponentialRampToValueAtTime(60 * r, t + 0.05 * d);
+  env(g, t, v * 0.9, 0.16 * d);
+  o.connect(g).connect(into);
+  o.start(t); o.stop(t + 0.2 * d);
+  return { src:o, dur:0.2 * d };
+}
+/* Brushed snare: noise only, no body. */
+function sSnare2(t, v, into, r, d){
+  const s = noise(), hp = actx.createBiquadFilter(), g = actx.createGain();
+  hp.type = 'highpass'; hp.frequency.value = 3000 * r;
+  env(g, t, v * 0.6, 0.1 * d, 0.02);
+  s.connect(hp).connect(g).connect(into);
+  s.start(t); s.stop(t + 0.14 * d);
+  return { src:s, dur:0.14 * d };
+}
+/* Metal: six inharmonic squares through a band-pass, the classic 808
+   cymbal trick. `hi` picks ride (tight) or crash (open). */
+function metal(t, v, into, r, d, hi, decay){
+  const bp = actx.createBiquadFilter(), g = actx.createGain();
+  bp.type = 'bandpass'; bp.frequency.value = hi * r; bp.Q.value = 1.4;
+  env(g, t, v * 0.22, decay * d);
+  bp.connect(g).connect(into);
+  let last = null;
+  [1, 1.41, 1.68, 2.11, 2.72, 3.14].forEach(m => {
+    const o = actx.createOscillator();
+    o.type = 'square'; o.frequency.value = 320 * m * r;
+    o.connect(bp);
+    o.start(t); o.stop(t + decay * d + 0.02);
+    last = o;
+  });
+  return { src:last, dur:decay * d + 0.02 };
+}
+function sRide(t, v, into, r, d){  return metal(t, v, into, r, d, 6000, 0.5); }
+function sCrash(t, v, into, r, d){ return metal(t, v, into, r, d, 4200, 1.2); }
+function sCongaH(t, v, into, r, d){
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.frequency.setValueAtTime(420 * r, t);
+  o.frequency.exponentialRampToValueAtTime(360 * r, t + 0.08 * d);
+  env(g, t, v * 0.6, 0.18 * d);
+  o.connect(g).connect(into);
+  o.start(t); o.stop(t + 0.22 * d);
+  return { src:o, dur:0.22 * d };
+}
+function sCongaL(t, v, into, r, d){
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.frequency.setValueAtTime(260 * r, t);
+  o.frequency.exponentialRampToValueAtTime(210 * r, t + 0.1 * d);
+  env(g, t, v * 0.6, 0.26 * d);
+  o.connect(g).connect(into);
+  o.start(t); o.stop(t + 0.3 * d);
+  return { src:o, dur:0.3 * d };
+}
+/* Shaker: noise with a soft attack, so it reads as a shake not a hit. */
+function sShaker(t, v, into, r, d){
+  const s = noise(), hp = actx.createBiquadFilter(), g = actx.createGain();
+  hp.type = 'highpass'; hp.frequency.value = 9000 * r;
+  env(g, t, v * 0.45, 0.1 * d, 0.025);
+  s.connect(hp).connect(g).connect(into);
+  s.start(t); s.stop(t + 0.14 * d);
+  return { src:s, dur:0.14 * d };
+}
+/* Wood block / zap: a fast pitch drop, useful as an accent. */
+function sZap(t, v, into, r, d){
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'square';
+  o.frequency.setValueAtTime(900 * r, t);
+  o.frequency.exponentialRampToValueAtTime(160 * r, t + 0.06 * d);
+  env(g, t, v * 0.3, 0.08 * d);
+  o.connect(g).connect(into);
+  o.start(t); o.stop(t + 0.1 * d);
+  return { src:o, dur:0.1 * d };
+}
 
-function synthPluck(freq, t, v, into){
+/* Sixteen voices, one per key, so the top half of a drum slot is no
+   longer a repeat of the bottom half. */
+const SDRUM = [sKick, sSnare, sHatC, sHatO, sClap, sTom, sRim, sCow,
+               sKick2, sSnare2, sRide, sCrash, sCongaH, sCongaL, sShaker, sZap];
+
+/* One kit per drum slot. `rot` rotates which voice each key gets, `r`
+   tunes the whole kit and `d` stretches or shortens every decay, so the
+   eight slots read as eight machines rather than one copied eight times. */
+const KITS = [
+  { name:'909',   rot:0,  r:1.00, d:1.00 },
+  { name:'808',   rot:0,  r:0.80, d:1.80 },
+  { name:'TIGHT', rot:0,  r:1.18, d:0.50 },
+  { name:'ROOM',  rot:8,  r:0.94, d:1.30 },
+  { name:'PERC',  rot:12, r:1.00, d:1.00 },
+  { name:'HI',    rot:2,  r:1.35, d:0.75 },
+  { name:'DEEP',  rot:0,  r:0.62, d:2.20 },
+  { name:'WIRE',  rot:6,  r:1.45, d:0.45 }
+];
+const kitOf = i => KITS[((i - 8) % KITS.length + KITS.length) % KITS.length];
+
+/* ------------------------------------------------------ melodic voices
+   One per melodic slot. Each takes the note frequency and plays it into
+   the slot's own filter/gain chain.                                    */
+
+/* Two oscillators an interval apart, summed — the backbone of most of
+   the voices below. */
+function stack(specs, t, v, into, decay, atk){
+  const g = actx.createGain();
+  env(g, t, v, decay, atk);
+  g.connect(into);
+  let last = null;
+  specs.forEach(sp => {
+    const o = actx.createOscillator();
+    o.type = sp.type;
+    o.frequency.value = sp.f;
+    if (sp.detune) o.detune.value = sp.detune;
+    const og = actx.createGain();
+    og.gain.value = sp.g;
+    o.connect(og).connect(g);
+    o.start(t); o.stop(t + decay + 0.05);
+    last = o;
+  });
+  return { src:last, dur:decay + 0.05 };
+}
+
+/* Sine carrier with a sine modulator on its frequency — bells, e-pianos
+   and anything else that needs partials a filter cannot give you. */
+function fm(freq, ratio, depth, t, v, into, decay){
+  const car = actx.createOscillator(), g = actx.createGain();
+  const mod = actx.createOscillator(), md = actx.createGain();
+  car.frequency.value = freq;
+  mod.frequency.value = freq * ratio;
+  md.gain.setValueAtTime(freq * depth, t);
+  md.gain.exponentialRampToValueAtTime(freq * depth * 0.02, t + decay);
+  mod.connect(md).connect(car.frequency);
+  env(g, t, v, decay);
+  car.connect(g).connect(into);
+  car.start(t); car.stop(t + decay + 0.05);
+  mod.start(t); mod.stop(t + decay + 0.05);
+  return { src:car, dur:decay + 0.05 };
+}
+
+function mPluck(f, t, v, into){
   const o = actx.createOscillator(), lp = actx.createBiquadFilter(), g = actx.createGain();
-  o.type = 'triangle'; o.frequency.value = freq;
+  o.type = 'triangle'; o.frequency.value = f;
   lp.type = 'lowpass'; lp.frequency.value = 3200;
-  env(g, t, v * 0.7, 0.3);
+  env(g, t, v * 0.9, 0.3);
   o.connect(lp).connect(g).connect(into);
   o.start(t); o.stop(t + 0.35);
   return { src:o, dur:0.35 };
 }
+/* Sub sine plus a filtered saw an octave down — sits under the drums. */
+function mBass(f, t, v, into){
+  const lp = actx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(1800, t);
+  lp.frequency.exponentialRampToValueAtTime(220, t + 0.3);
+  lp.connect(into);
+  return stack([{ type:'sine', f:f / 2, g:0.9 },
+                { type:'sawtooth', f:f / 2, g:0.35 }], t, v * 0.55, lp, 0.45);
+}
+function mEPiano(f, t, v, into){ return fm(f, 2, 2.2, t, v * 0.5, into, 0.5); }
+function mBell(f, t, v, into){   return fm(f, 3.51, 3.4, t, v * 0.4, into, 1.2); }
+/* Drawbar organ: three sines, no decay to speak of. */
+function mOrgan(f, t, v, into){
+  return stack([{ type:'sine', f:f, g:0.7 },
+                { type:'sine', f:f * 2, g:0.4 },
+                { type:'sine', f:f * 3, g:0.22 }], t, v * 0.42, into, 0.4, 0.012);
+}
+/* Detuned saw pair through a closing filter — the lead voice. */
+function mSaw(f, t, v, into){
+  const lp = actx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.Q.value = 6;
+  lp.frequency.setValueAtTime(5200, t);
+  lp.frequency.exponentialRampToValueAtTime(700, t + 0.35);
+  lp.connect(into);
+  return stack([{ type:'sawtooth', f:f, g:0.5, detune:-7 },
+                { type:'sawtooth', f:f, g:0.5, detune:7 }], t, v * 0.5, lp, 0.4);
+}
+/* Slow attack, long tail — chords rather than hits. */
+function mStrings(f, t, v, into){
+  const lp = actx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 2600;
+  lp.connect(into);
+  return stack([{ type:'sawtooth', f:f, g:0.4, detune:-9 },
+                { type:'sawtooth', f:f, g:0.4, detune:9 },
+                { type:'sawtooth', f:f * 2, g:0.15 }], t, v * 0.6, lp, 0.9, 0.09);
+}
+/* One square, gone in a flash. */
+function mBlip(f, t, v, into){
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'square'; o.frequency.value = f;
+  env(g, t, v * 0.5, 0.09);
+  o.connect(g).connect(into);
+  o.start(t); o.stop(t + 0.12);
+  return { src:o, dur:0.12 };
+}
+
+const SMEL = [mPluck, mBass, mEPiano, mOrgan, mSaw, mBell, mStrings, mBlip];
+const MEL_NAMES = ['PLUCK', 'BASS', 'E.PIANO', 'ORGAN', 'SAW', 'BELL',
+                   'STRINGS', 'BLIP'];
+
+/* What an empty slot is playing, for the pads and the display. */
+function voiceName(i){
+  return i < 8 ? MEL_NAMES[i % 8] : 'KIT ' + kitOf(i).name;
+}
+function voiceDesc(i){
+  return i < 8 ? MEL_NAMES[i % 8] + ' voice' : kitOf(i).name + ' kit';
+}
+
 const noteFreq = n => 261.63 * Math.pow(2, n / 12);
 
 /* ----------------------------------------------------- reversed buffers */
@@ -392,20 +626,22 @@ function playSample(s, o){
 
 /* Synth voices run through the same filter/gain chain as a sample, so the
    tone and filter knobs work identically on empty slots. */
-function playDrumVoice(ix, ratio, o){
+function playDrumVoice(slot, ix, ratio, o){
   const chain = makeChain(o.vol, o.cut, o.res);
+  const kit = kitOf(slot);
   try {
-    const v = SDRUM[((ix % 8) + 8) % 8](o.time, 1, chain.input, ratio);
+    const key = (((ix + kit.rot) % 16) + 16) % 16;
+    const v = SDRUM[key](o.time, 1, chain.input, ratio * kit.r, kit.d);
     autoRelease(v.src, chain, v.dur);
   } catch (e){
     console.warn('drum playback failed', e);
     chain.release();
   }
 }
-function playPluck(freq, o){
+function playPluck(slot, freq, o){
   const chain = makeChain(o.vol, o.cut, o.res);
   try {
-    const v = synthPluck(freq, o.time, 1, chain.input);
+    const v = SMEL[((slot % 8) + 8) % 8](freq, o.time, 1, chain.input);
     autoRelease(v.src, chain, v.dur);
   } catch (e){
     console.warn('synth playback failed', e);
