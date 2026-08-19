@@ -165,4 +165,8 @@ function stopSeq(){
   drawStepIx = -1;
   queue.length = 0;
   setStepFX(null);
+  // STOP means silence: voices already sounding — including hand-played
+  // hits the transport never scheduled — are cut here, not left to run
+  // on until their sample ends.
+  stopAllVoices();
 }

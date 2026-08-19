@@ -254,13 +254,44 @@ function makeChain(vol, cut, res){
   };
 }
 
+/* Every voice that is still sounding. A hit played by hand outlives the
+   step that fired it, so STOP needs a list of what is running rather than
+   only the scheduler's future notes. */
+const liveVoices = new Set();
+
 /* Tear the chain down once the source that feeds it has finished. */
 function autoRelease(src, chain, fallbackSeconds){
   let done = false;
-  const kill = () => { if (done) return; done = true; chain.release(); };
+  const voice = { src, chain };
+  const kill = () => {
+    if (done) return;
+    done = true;
+    liveVoices.delete(voice);
+    chain.release();
+  };
+  liveVoices.add(voice);
   src.onended = kill;
   // onended is not guaranteed to fire if the context is closed mid-flight
   setTimeout(kill, Math.max(0.2, fallbackSeconds) * 1000 + 400);
+}
+
+/* Silence the instrument. Each voice is faded over a few milliseconds
+   instead of cut dead, so stopping in the middle of a sample does not
+   click; the stop itself then fires onended and releases the chain.
+   A voice scheduled for later is stopped before its start time, which
+   means it never sounds at all. */
+function stopAllVoices(){
+  if (!actx) return;
+  const t = actx.currentTime;
+  liveVoices.forEach(v => {
+    try {
+      const g = v.chain.gain.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(0.0001, t + 0.012);
+    } catch (e) { /* chain already released */ }
+    try { v.src.stop(t + 0.02); } catch (e) { /* already stopped */ }
+  });
 }
 
 /* ------------------------------------------------- synth fallback voices
