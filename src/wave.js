@@ -80,7 +80,7 @@ function drawWave(){
     c.fillStyle = INK;
     c.font = '9px ui-monospace, monospace';
     c.textAlign = 'center';
-    c.fillText('no sample — playing a synth voice', w / 2, h / 2 - 3);
+    c.fillText('no sample — playing the ' + voiceDesc(sel), w / 2, h / 2 - 3);
     c.fillStyle = REST;
     c.fillText('hold REC + a key to sample', w / 2, h / 2 + 10);
     return;
