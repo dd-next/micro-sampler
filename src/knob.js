@@ -4,6 +4,10 @@
    Drag vertically, roll the wheel, or focus it and use the arrow keys.
    Double-click (or Delete) returns it to its default. Bipolar knobs draw
    their arc out from the centre instead of up from the minimum.
+
+   The arc, the cap and the pointer are drawn flat: butt ends, no
+   shadow, and every colour comes from the stylesheet. Stroke widths are
+   in viewBox units — the face is 40px across, so 8 lands on 3px.
    ====================================================================== */
 
 const KNOB_SWEEP = 270;                       // degrees of travel
@@ -35,11 +39,11 @@ function makeKnob(el, opts){
 
   el.innerHTML = `
     <svg viewBox="0 0 100 100" aria-hidden="true">
-      <path class="kn-trk" fill="none" stroke-linecap="round" stroke-width="7"></path>
-      <path class="kn-arc" fill="none" stroke-linecap="round" stroke-width="7"></path>
+      <path class="kn-trk" fill="none" stroke-linecap="butt" stroke-width="8"></path>
+      <path class="kn-arc" fill="none" stroke-linecap="butt" stroke-width="8"></path>
       <circle class="kn-cap" cx="50" cy="50" r="27"></circle>
       <circle class="kn-rim" cx="50" cy="50" r="27" fill="none" stroke-width="1.5"></circle>
-      <line class="kn-ptr" stroke-linecap="round" stroke-width="4"></line>
+      <line class="kn-ptr" stroke-linecap="butt" stroke-width="7.5"></line>
     </svg>
     <div class="kn-val"></div>
     <div class="kn-tag"></div>

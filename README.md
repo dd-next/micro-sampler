@@ -108,7 +108,7 @@ the filesystem, which matters for something you want to open and play.
 
 ```
 index.html          markup and script order
-src/styles.css      all styling, themed with CSS custom properties
+src/styles.css      all styling — the STICKER skin, on CSS custom properties
 src/state.js        constants, slot model, pattern model, memory pool
 src/audio.js        graph, synth voices, filter, sample playback
 src/record.js       microphone capture into the memory pool
@@ -123,6 +123,18 @@ src/main.js         boot
 sw.js               offline shell
 scripts/            icon generation and static checks — never shipped
 ```
+
+### The skin
+
+The visual layer stands on its own: flat paper surfaces, a 3px black outline
+on everything you can touch, and hard offset shadows with no blur and no
+alpha. Pressing something moves it into its own shadow —
+`transform:translate(3px,3px)` with the shadow off — and nothing transitions,
+so the response reads as a switch rather than a web page. Colour carries
+role, never depth: lilac is melodic, pink is drum, green is transport and
+steps, red is record. Space Grotesk and IBM Plex Mono are pulled from Google
+Fonts; with no connection they fall back to the system sans and monospace and
+nothing else changes.
 
 ### The one idea worth stealing: the scheduler
 

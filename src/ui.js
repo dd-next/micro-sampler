@@ -462,6 +462,7 @@ function showMicError(err){
 function volumeKey(i){
   setMaster((i + 1) / 16);
   masterS.value = Math.round(master * 100);
+  paintRange(masterS);
   $('masterV').textContent = Math.round(master * 100);
   msg('volume ' + Math.round(master * 100));
   renderGrid();
@@ -714,15 +715,28 @@ clrBtn.addEventListener('click', () => {
   scheduleSave();
 });
 
-bpmS.addEventListener('input', e => { bpm = +e.target.value; syncTempoLabels(); scheduleSave(); });
+/* The skin fills a slider track with background-size, which needs the
+   value as a percentage — the one thing the stylesheet cannot work out on
+   its own, so every path that moves a slider ends up here. */
+function paintRange(el){
+  const min = +el.min, max = +el.max;
+  el.style.setProperty('--fill', ((el.value - min) / ((max - min) || 1)) * 100 + '%');
+}
+function paintRanges(){ [bpmS, swingS, masterS].forEach(paintRange); }
+
+bpmS.addEventListener('input', e => {
+  bpm = +e.target.value; paintRange(e.target); syncTempoLabels(); scheduleSave();
+});
 swingS.addEventListener('input', e => {
   swing = +e.target.value;
   $('swingV').textContent = swing;
+  paintRange(e.target);
   scheduleSave();
 });
 masterS.addEventListener('input', e => {
   setMaster(e.target.value / 100);
   $('masterV').textContent = e.target.value;
+  paintRange(e.target);
   scheduleSave();
 });
 tempoBtn.addEventListener('click', () => {
@@ -733,6 +747,7 @@ tempoBtn.addEventListener('click', () => {
   scheduleSave();
 });
 function syncTempoLabels(){
+  paintRange(bpmS);
   $('bpmVal').textContent = bpm;
   $('bpmV2').textContent = bpm;
   $('tempoBpm').textContent = bpm;

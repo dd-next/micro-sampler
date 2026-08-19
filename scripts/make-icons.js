@@ -48,62 +48,41 @@ function png(width, height, rgba){
   ]);
 }
 
-/* ------------------------------------------------------------ the icon */
-const BG    = [0x0b, 0x0b, 0x12];
-const PAD   = [0x1e, 0x1e, 0x2a];
-const UV    = [0x9b, 0x6c, 0xff];
-const AMBER = [0xf0, 0xa5, 0x3c];
-const CYAN  = [0x4f, 0xd4, 0xc4];
+/* ------------------------------------------------------------ the icon
+   The STICKER skin in miniature: a printed case on graph-paper stock,
+   four pads, one of them lilac. Flat fills and square corners only, so
+   the same geometry describes the PNGs and the SVG twin exactly.        */
+const BG    = [0xef, 0xe9, 0xdc];   // case background
+const PAPER = [0xfa, 0xf7, 0xf0];   // pad face
+const LINE  = [0x0a, 0x0a, 0x0a];   // every outline
+const UV    = [0xb6, 0xa4, 0xf5];   // the one lit pad
 
-// which of the 16 pads are lit, reading left to right, top to bottom
-const LIT = { 0:UV, 5:AMBER, 6:AMBER, 9:CYAN, 12:AMBER, 15:UV };
+// all in fractions of the icon, so 192 and 512 come out identical
+const CASE = { x0:0.10, x1:0.90, bw:0.035 };
+const PAD  = { size:0.255, bw:0.025, at:[0.22, 0.525] };
 
 function draw(size){
   const buf = Buffer.alloc(size * size * 4);
-  const put = (x, y, c, a) => {
-    const i = (y * size + x) * 4;
-    const al = a === undefined ? 1 : a;
-    buf[i]     = Math.round(buf[i]     * (1 - al) + c[0] * al);
-    buf[i + 1] = Math.round(buf[i + 1] * (1 - al) + c[1] * al);
-    buf[i + 2] = Math.round(buf[i + 2] * (1 - al) + c[2] * al);
-    buf[i + 3] = 255;
-  };
-
-  // background with a soft glow up top
-  for (let y = 0; y < size; y++){
-    for (let x = 0; x < size; x++){
-      const dx = (x - size / 2) / size, dy = (y + size * 0.15) / size;
-      const g = Math.max(0, 0.55 - Math.sqrt(dx * dx + dy * dy)) * 0.5;
-      put(x, y, [BG[0] + g * 90, BG[1] + g * 50, BG[2] + g * 120]);
-    }
-  }
-
-  // 4x4 pads, rounded, inset from the edge
-  const inset = size * 0.14;
-  const span  = size - inset * 2;
-  const gap   = span * 0.055;
-  const cell  = (span - gap * 3) / 4;
-  const r     = cell * 0.26;
-
-  for (let n = 0; n < 16; n++){
-    const cx = inset + (n % 4) * (cell + gap);
-    const cy = inset + Math.floor(n / 4) * (cell + gap);
-    const col = LIT[n] || PAD;
-    const x0 = Math.floor(cx), y0 = Math.floor(cy);
-    const x1 = Math.ceil(cx + cell), y1 = Math.ceil(cy + cell);
-    for (let y = y0; y < y1; y++){
-      for (let x = x0; x < x1; x++){
-        if (x < 0 || y < 0 || x >= size || y >= size) continue;
-        // rounded-corner coverage, sampled once per pixel centre
-        const px = x + 0.5, py = y + 0.5;
-        const qx = Math.max(cx + r - px, 0, px - (cx + cell - r));
-        const qy = Math.max(cy + r - py, 0, py - (cy + cell - r));
-        const d = Math.sqrt(qx * qx + qy * qy);
-        if (d > r + 0.7) continue;
-        const a = d <= r - 0.5 ? 1 : Math.max(0, Math.min(1, (r + 0.5 - d)));
-        put(x, y, col, a);
+  const rect = (x0, y0, x1, y1, c) => {
+    const ix0 = Math.max(0, Math.round(x0 * size)), ix1 = Math.min(size, Math.round(x1 * size));
+    const iy0 = Math.max(0, Math.round(y0 * size)), iy1 = Math.min(size, Math.round(y1 * size));
+    for (let y = iy0; y < iy1; y++){
+      for (let x = ix0; x < ix1; x++){
+        const i = (y * size + x) * 4;
+        buf[i] = c[0]; buf[i + 1] = c[1]; buf[i + 2] = c[2]; buf[i + 3] = 255;
       }
     }
+  };
+  const outlined = (x0, y0, x1, y1, fill, bw) => {
+    rect(x0, y0, x1, y1, LINE);
+    rect(x0 + bw, y0 + bw, x1 - bw, y1 - bw, fill);
+  };
+
+  rect(0, 0, 1, 1, BG);
+  outlined(CASE.x0, CASE.x0, CASE.x1, CASE.x1, PAPER, CASE.bw);
+  for (let n = 0; n < 4; n++){
+    const x = PAD.at[n % 2], y = PAD.at[Math.floor(n / 2)];
+    outlined(x, y, x + PAD.size, y + PAD.size, n === 0 ? UV : PAPER, PAD.bw);
   }
   return buf;
 }
@@ -119,17 +98,26 @@ function writeAll(){
   console.log('wrote public/icon.svg');
 }
 
-/* An SVG twin for the browser tab. */
+/* An SVG twin for the browser tab, drawn from the same fractions. On a
+   100-unit canvas an SVG stroke straddles its path, so each rectangle is
+   inset by half the outline it carries. */
 function svgSource(){
-const cells = [];
-for (let n = 0; n < 16; n++){
-  const c = LIT[n];
-  const fill = c ? `rgb(${c.join(',')})` : '#1e1e2a';
-  cells.push(`<rect x="${(14 + (n % 4) * 19.3).toFixed(1)}" y="${(14 + Math.floor(n / 4) * 19.3).toFixed(1)}" width="14.7" height="14.7" rx="3.8" fill="${fill}"/>`);
-}
-return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-<rect width="100" height="100" rx="18" fill="#0b0b12"/>
-${cells.join('\n')}
+  const hex = c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+  const box = (x0, y0, x1, y1, fill, bw) => {
+    const h = bw / 2;
+    return `<rect x="${((x0 + h) * 100).toFixed(2)}" y="${((y0 + h) * 100).toFixed(2)}" ` +
+           `width="${((x1 - x0 - bw) * 100).toFixed(2)}" height="${((y1 - y0 - bw) * 100).toFixed(2)}" ` +
+           `fill="${hex(fill)}" stroke="${hex(LINE)}" stroke-width="${(bw * 100).toFixed(2)}"/>`;
+  };
+  const pads = [];
+  for (let n = 0; n < 4; n++){
+    const x = PAD.at[n % 2], y = PAD.at[Math.floor(n / 2)];
+    pads.push(box(x, y, x + PAD.size, y + PAD.size, n === 0 ? UV : PAPER, PAD.bw));
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<rect width="100" height="100" fill="${hex(BG)}"/>
+${box(CASE.x0, CASE.x0, CASE.x1, CASE.x1, PAPER, CASE.bw)}
+${pads.join('\n')}
 </svg>
 `;
 }

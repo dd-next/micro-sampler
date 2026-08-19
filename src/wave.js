@@ -9,6 +9,12 @@
 const waveCv = document.getElementById('wave');
 const MIN_REGION = 0.004;
 
+/* Ink on white, the same four flat colours the skin uses elsewhere. */
+const INK    = '#0a0a0a';   // the part of the sound that will play
+const REST   = '#c9c4b8';   // everything trimmed away
+const DRUM   = '#e88aa5';   // slice grid
+const CURSOR = '#ff6b5c';   // trim handles
+
 let peakCache = null;       // { buffer, w, min:Float32Array, max:Float32Array }
 
 /* ------------------------------------------------------------- geometry */
@@ -71,11 +77,11 @@ function drawWave(){
   c.clearRect(0, 0, w, h);
 
   if (!s.buffer){
-    c.fillStyle = '#33333f';
+    c.fillStyle = INK;
     c.font = '9px ui-monospace, monospace';
     c.textAlign = 'center';
     c.fillText('no sample — playing a synth voice', w / 2, h / 2 - 3);
-    c.fillStyle = '#2a2a35';
+    c.fillStyle = REST;
     c.fillText('hold REC + a key to sample', w / 2, h / 2 + 10);
     return;
   }
@@ -89,24 +95,19 @@ function drawWave(){
   // whole-sound region, drawn behind, so drum trims read in context
   const gs = s.start * w, gel = (s.start + s.length) * w;
 
-  const live = isDrum ? '#4fd4c4' : '#9b6cff';
+  // two tones only: the part that will sound is black, the rest is the
+  // grey of a printed waveform. Nothing is dimmed or tinted.
   for (let x = 0; x < w; x++){
-    const inReg  = x >= rs && x <= re;
-    const inWhole = x >= gs && x <= gel;
-    c.fillStyle = inReg ? live : (inWhole ? '#4a4a5f' : '#31313f');
+    const inReg = x >= rs && x <= re && x >= gs && x <= gel;
+    c.fillStyle = inReg ? INK : REST;
     const top = mid + peaks.min[x] * mid * 0.94;
     const hgt = Math.max(1, (peaks.max[x] - peaks.min[x]) * mid * 0.94);
     c.fillRect(x, top, 1, hgt);
   }
 
-  // dim everything outside the sound
-  c.fillStyle = 'rgba(0,0,0,.42)';
-  c.fillRect(0, 0, gs, h);
-  c.fillRect(gel, 0, w - gel, h);
-
-  // slice grid
+  // slice grid, in the drum role colour
   if (isDrum){
-    c.strokeStyle = 'rgba(79,212,196,.28)';
+    c.strokeStyle = DRUM;
     c.lineWidth = 1;
     for (let k = 0; k < 16; k++){
       const sl = sliceOf(s, k);
@@ -114,20 +115,21 @@ function drawWave(){
       c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
     }
     // number the slice being edited
-    c.fillStyle = 'rgba(79,212,196,.9)';
+    c.fillStyle = DRUM;
     c.font = '8px ui-monospace, monospace';
     c.textAlign = 'left';
     c.fillText('S' + (lastSlice + 1), Math.min(w - 16, rs + 3), 10);
   }
 
-  // handles
-  c.fillStyle = '#f0a53c';
-  c.fillRect(rs - 1, 0, 2, h);
-  c.fillRect(re - 1, 0, 2, h);
-  c.fillRect(Math.max(0, rs - 4), 0, 8, 6);
-  c.fillRect(Math.min(w - 8, re - 4), 0, 8, 6);
-  c.fillRect(Math.max(0, rs - 4), h - 6, 8, 6);
-  c.fillRect(Math.min(w - 8, re - 4), h - 6, 8, 6);
+  // handles: a 3px red rule at each edge of the region, with a grip at
+  // the top and bottom of it so it is visible over a dense waveform
+  c.fillStyle = CURSOR;
+  c.fillRect(Math.round(rs) - 1, 0, 3, h);
+  c.fillRect(Math.round(re) - 2, 0, 3, h);
+  c.fillRect(Math.max(0, rs - 4), 0, 9, 6);
+  c.fillRect(Math.min(w - 9, re - 5), 0, 9, 6);
+  c.fillRect(Math.max(0, rs - 4), h - 6, 9, 6);
+  c.fillRect(Math.min(w - 9, re - 5), h - 6, 9, 6);
 }
 
 /* -------------------------------------------------------------- dragging */
