@@ -26,6 +26,7 @@ function refreshAll(){
   document.getElementById('swingV').textContent = swing;
   masterS.value = Math.round(master * 100);
   document.getElementById('masterV').textContent = Math.round(master * 100);
+  paintRanges();
   setPage(page);
   selectSlot(sel);
   updateMem();
