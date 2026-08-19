@@ -30,6 +30,7 @@ function fxActiveList(){ return heldFX.size ? [...heldFX] : (stepFX != null ? [s
 /* Some effects need to remember where the transport was when they landed. */
 function captureAnchor(i){
   switch (i){
+    case 0:  return Math.floor(currentStep / 8) * 8;
     case 2:  return Math.floor(currentStep / 4) * 4;
     case 3:  return Math.floor(currentStep / 2) * 2;
     default: return null;
@@ -76,7 +77,7 @@ function recomputeFX(){
 
   for (const i of fxActiveList().sort((a, b) => a - b)){
     switch (i){
-      case 0:  loopWindow = [0, 16]; break;
+      case 0:  { const lo = fxAnchor.get(0) ?? 0; loopWindow = [lo, lo + 8]; break; }
       case 1:  loopWindow = [0, 12]; break;
       case 2:  { const lo = fxAnchor.get(2) ?? 0; loopWindow = [lo, lo + 4]; break; }
       case 3:  { const lo = fxAnchor.get(3) ?? 0; loopWindow = [lo, lo + 2]; break; }

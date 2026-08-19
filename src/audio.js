@@ -83,6 +83,7 @@ function rebuildAudio(){
 
   actx = null; masterGain = null; comp = null; analyser = null; noiseBuf = null;
   if (typeof slots !== 'undefined') slots.forEach(s => { s.rev = null; });
+  revSynth.clear();
   if (old){ try { old.close(); } catch (e) { /* already gone */ } }
 
   const next = ensureAudio();
@@ -598,6 +599,79 @@ function getRev(s){
   return s.rev;
 }
 
+/* ------------------------------------------------ reversed synth voices
+   A synth voice is generated, not sampled, so there is no buffer to flip.
+   Render one into an OfflineAudioContext, reverse what comes back and keep
+   it: the same key on the same slot renders identically every time, so one
+   render serves every later hit. The first hit of a voice still sounds
+   forwards — its render is in flight — and everything after it is reversed.
+   Without this, REVERSE was silent on every empty slot, which is most of
+   the machine until samples are loaded. */
+const revSynth = new Map();          // voice key → AudioBuffer, or REV_PENDING
+const REV_PENDING    = 'rendering';
+const REV_CACHE_MAX  = 96;
+const REV_RENDER_MAX = 4;            // seconds; longer than the longest voice
+
+function revSynthBuffer(key, build){
+  const have = revSynth.get(key);
+  if (have) return have === REV_PENDING ? null : have;
+
+  const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OC) return null;
+
+  const rate = actx.sampleRate;
+  let off;
+  try { off = new OC(1, Math.ceil(REV_RENDER_MAX * rate), rate); }
+  catch (e){ console.warn('reverse render unavailable', e); return null; }
+
+  // the voice builders reach for the global context, so lend them this one
+  const live = actx;
+  let dur;
+  try {
+    actx = off;
+    dur = build(off.destination).dur;
+  } catch (e){
+    console.warn('reverse render failed', e);
+    return null;
+  } finally {
+    actx = live;
+  }
+
+  revSynth.set(key, REV_PENDING);
+  off.startRendering().then(buf => {
+    if (revSynth.size > REV_CACHE_MAX) revSynth.clear();
+    revSynth.set(key, revHead(buf, dur));
+  }).catch(err => {
+    console.warn('reverse render failed', err);
+    revSynth.delete(key);
+  });
+  return null;
+}
+
+/* The first `seconds` of a rendered voice, flipped. Trimming before the
+   flip matters: reversing the whole render would put its trailing silence
+   at the front and the hit would arrive late. */
+function revHead(buf, seconds){
+  const n = Math.max(1, Math.min(buf.length, Math.ceil(seconds * buf.sampleRate)));
+  const out = actx.createBuffer(1, n, buf.sampleRate);
+  const s = buf.getChannelData(0), d = out.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = s[n - 1 - i];
+  return out;
+}
+
+function playRevVoice(buf, chain, time){
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  src.connect(chain.input);
+  try {
+    src.start(time);
+    autoRelease(src, chain, buf.duration);
+  } catch (e){
+    console.warn('reverse playback failed', e);
+    chain.release();
+  }
+}
+
 /* --------------------------------------------- sample playback (one hit)
    `off` and `len` are seconds inside the buffer; the source is started on
    the audio clock so trims and slices are sample accurate.             */
@@ -629,8 +703,13 @@ function playSample(s, o){
 function playDrumVoice(slot, ix, ratio, o){
   const chain = makeChain(o.vol, o.cut, o.res);
   const kit = kitOf(slot);
+  const key = (((ix + kit.rot) % 16) + 16) % 16;
+  if (o.rev){
+    const buf = revSynthBuffer('d' + kit.name + ':' + key + ':' + ratio.toFixed(4),
+                               dest => SDRUM[key](0, 1, dest, ratio * kit.r, kit.d));
+    if (buf) { playRevVoice(buf, chain, o.time); return; }
+  }
   try {
-    const key = (((ix + kit.rot) % 16) + 16) % 16;
     const v = SDRUM[key](o.time, 1, chain.input, ratio * kit.r, kit.d);
     autoRelease(v.src, chain, v.dur);
   } catch (e){
@@ -640,8 +719,14 @@ function playDrumVoice(slot, ix, ratio, o){
 }
 function playPluck(slot, freq, o){
   const chain = makeChain(o.vol, o.cut, o.res);
+  const ix = ((slot % 8) + 8) % 8;
+  if (o.rev){
+    const buf = revSynthBuffer('m' + ix + ':' + freq.toFixed(2),
+                               dest => SMEL[ix](freq, 0, 1, dest));
+    if (buf) { playRevVoice(buf, chain, o.time); return; }
+  }
   try {
-    const v = SMEL[((slot % 8) + 8) % 8](freq, o.time, 1, chain.input);
+    const v = SMEL[ix](freq, o.time, 1, chain.input);
     autoRelease(v.src, chain, v.dur);
   } catch (e){
     console.warn('synth playback failed', e);

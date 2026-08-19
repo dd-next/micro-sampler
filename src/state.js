@@ -13,12 +13,12 @@ const MAX_CHAIN   = 128;         // patterns that can be chained into a song
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B',
                     'C↑','C#↑','D↑','D#↑'];
 
-const FX_NAMES = ['LOOP 16','LOOP 12','LOOP ¼','LOOP ⅛','UNISON','UNI LOW',
+const FX_NAMES = ['LOOP 8','LOOP 12','LOOP ¼','LOOP ⅛','UNISON','UNI LOW',
                   'OCT +','OCT −','STUT 4','STUT 3','SCRATCH','SCR FAST',
                   '6 / 8','RETRIG','REVERSE','— OFF'];
 
 const FX_HINTS = [
-  'loop the whole 16-step bar',
+  'loop the current half-bar (8 steps)',
   'loop the first 12 steps — drops a beat',
   'loop the current quarter (4 steps)',
   'loop the current eighth (2 steps)',

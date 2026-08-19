@@ -80,7 +80,7 @@ function trig(idx, time, cell){
       }));
     }
   } else {
-    const o = { vol, cut, res, time };
+    const o = { vol, cut, res, rev:reverseOn, time };
     if (isDrum){
       const ratio = Math.pow(2, tune / 12) * oct;
       playDrumVoice(idx, v, ratio, o);
