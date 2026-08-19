@@ -245,7 +245,12 @@ async function buildCapture(){
 function releaseMic(){
   micGeneration++;            // invalidates an arm that is still in flight
   arming = null;
-  if (recState !== 'idle') stopRec(true);
+  // Only a take still being captured is worth throwing away. One that is
+  // already stopping has all its audio; nothing is outstanding but the
+  // flush, which finishes without the microphone. Discarding here lost the
+  // sample whenever REC was released in the same moment as the key -- which
+  // is exactly how the instrument is meant to be played.
+  if (recState === 'recording') stopRec(true);
   if (micSource){ try { micSource.disconnect(); } catch (e) { /* gone */ } micSource = null; }
   if (micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   if (capNode){
@@ -282,7 +287,7 @@ function onCaptured(pcm, peak, done){
 
 function startRec(slotIx){
   if (recState !== 'idle') return false;
-  const free = memFree();
+  const free = memFreeFor(slotIx);
   if (free < MIN_SAMPLE) return false;
 
   recState  = 'recording';

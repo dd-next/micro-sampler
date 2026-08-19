@@ -174,7 +174,7 @@ body{
 .knob{
   position:relative;width:62px;height:74px;flex:0 0 auto;
   display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:1px;
-  touch-action:none;user-select:none;cursor:ns-resize;
+  touch-action:none;-webkit-user-select:none;user-select:none;cursor:ns-resize;
   -webkit-tap-highlight-color:transparent;
 }
 .knob:focus-visible{outline:2px solid var(--uv);outline-offset:3px;border-radius:12px}
@@ -283,7 +283,7 @@ body{
   font-family:var(--mono);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 1px 2px rgba(0,0,0,.5);
   transition:transform .05s, box-shadow .1s, border-color .1s, background .1s;
-  -webkit-tap-highlight-color:transparent;touch-action:none;user-select:none;
+  -webkit-tap-highlight-color:transparent;touch-action:none;-webkit-user-select:none;user-select:none;
 }
 .key:focus-visible{outline:2px solid var(--uv);outline-offset:2px}
 .key .kidx{position:absolute;top:4px;left:7px;font-size:8px;color:#54546a}
@@ -339,7 +339,7 @@ body{
   font-family:var(--mono);font-size:9px;letter-spacing:.04em;text-transform:uppercase;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
   transition:all .08s;
-  -webkit-tap-highlight-color:transparent;touch-action:none;user-select:none;
+  -webkit-tap-highlight-color:transparent;touch-action:none;-webkit-user-select:none;user-select:none;
 }
 .mbtn:focus-visible{outline:2px solid var(--uv);outline-offset:2px}
 .mbtn kbd{font:inherit;font-size:7px;color:#4a4a5c;background:none;border:none;padding:0}
@@ -607,4 +607,19 @@ body{
   *{transition:none!important;animation:none!important}
 }
 
-.key,.mbtn,.knob{-webkit-touch-callout:none}
+/* ---------------------------------------------------------- selection
+   Safari only understands `user-select` unprefixed from version 17, so the
+   prefixed property has to be there too. Without it, holding a pad — which
+   is the normal way to record, and how FX are played — reads as a long
+   press: iOS highlights the label and pops the callout menu over the grid.
+   Nothing in the instrument is text you would want to copy; the guide is,
+   so it opts back in. */
+body{
+  -webkit-user-select:none;
+  user-select:none;
+  -webkit-touch-callout:none;
+}
+.guide,.guide *{
+  -webkit-user-select:text;
+  user-select:text;
+}
