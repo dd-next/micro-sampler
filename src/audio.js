@@ -54,17 +54,46 @@ function resumeAudio(){
   return resumePromise;
 }
 
+/* iOS audio sessions.
+   `playback` is what stops the physical silent switch muting Web Audio — but
+   it is an output-only session, and asking for the microphone while it is
+   active fails with InvalidStateError. Recording needs `play-and-record`, so
+   the type follows what the app is actually doing. */
+function setAudioSession(type){
+  try {
+    if (navigator.audioSession && navigator.audioSession.type !== type){
+      navigator.audioSession.type = type;
+      return true;
+    }
+  } catch (e) { /* not supported on this browser */ }
+  return false;
+}
+
+/* Switching session type can change the hardware sample rate underneath a
+   live AudioContext, which leaves it unusable. Start a clean one and rebuild
+   the graph. AudioBuffers survive: they are not bound to a context. */
+function rebuildAudio(){
+  const old = actx;
+  const wasPlaying = typeof playing !== 'undefined' && playing;
+  if (wasPlaying && typeof stopSeq === 'function') stopSeq();
+  if (typeof stopScratch === 'function') stopScratch();
+
+  actx = null; masterGain = null; comp = null; analyser = null; noiseBuf = null;
+  if (typeof slots !== 'undefined') slots.forEach(s => { s.rev = null; });
+  if (old){ try { old.close(); } catch (e) { /* already gone */ } }
+
+  const next = ensureAudio();
+  if (wasPlaying && typeof startSeq === 'function') startSeq();
+  return next;
+}
+
 function ensureAudio(){
   if (actx){
     resumeAudio();
     if (typeof startUiLoop === 'function') startUiLoop();
     return actx;
   }
-  // Safari mutes Web Audio with the physical silent switch unless the page
-  // declares itself a playback session. Harmless everywhere else.
-  try {
-    if (navigator.audioSession) navigator.audioSession.type = 'playback';
-  } catch (e) { /* not supported */ }
+  setAudioSession('playback');
 
   const AC = window.AudioContext || window.webkitAudioContext;
   actx = new AC({ latencyHint:'interactive' });

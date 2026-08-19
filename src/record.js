@@ -116,28 +116,44 @@ function armMic(){
 
   const gen = ++micGeneration;
   arming = (async () => {
+    // Ask for a session that permits input *before* opening the microphone.
+    // Under the output-only `playback` session, createMediaStreamSource
+    // fails with InvalidStateError.
+    const sessionChanged = setAudioSession('play-and-record');
     ensureAudio();
+    if (sessionChanged) await resumeAudio();
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
       const e = new Error('getUserMedia is not available');
       e.name = window.isSecureContext ? 'NotSupportedError' : 'InsecureContextError';
       throw e;
     }
 
-    const stream = await getMicStream();
+    const stream = await stage('permission', () => getMicStream());
     if (gen !== micGeneration){
       stream.getTracks().forEach(t => t.stop());
-      const e = new Error('cancelled'); e.name = 'AbortError'; throw e;
+      throw cancelled();
     }
     micStream = stream;
 
     // the permission prompt suspends the context on iOS
     await resumeAudio();
-    micSource = actx.createMediaStreamSource(micStream);
-    await buildCapture();
-    if (gen !== micGeneration){
-      const e = new Error('cancelled'); e.name = 'AbortError'; throw e;
+    try {
+      await wireCapture();
+    } catch (err){
+      // Opening the microphone can move the hardware sample rate, which
+      // leaves the existing context unusable. One clean retry.
+      if (err && err.name === 'InvalidStateError'){
+        console.warn('capture graph rejected the context; rebuilding', err);
+        rebuildAudio();
+        await resumeAudio();
+        await wireCapture();
+      } else {
+        throw err;
+      }
     }
-    micSource.connect(capNode);
+    if (gen !== micGeneration) throw cancelled();
+
     lastMicError = null;
     return true;
   })();
@@ -145,6 +161,29 @@ function armMic(){
   const settle = () => { if (gen === micGeneration) arming = null; };
   arming.then(settle, err => { settle(); lastMicError = err; });
   return arming;
+}
+
+function cancelled(){
+  const e = new Error('cancelled'); e.name = 'AbortError'; return e;
+}
+
+/* Label which step failed, so a report from a device we cannot debug says
+   more than just the error name. */
+async function stage(name, fn){
+  try {
+    return await fn();
+  } catch (err){
+    if (err && !err.stage) err.stage = name;
+    throw err;
+  }
+}
+
+/* Everything that binds the live stream into the audio graph, as one unit so
+   it can be retried on a freshly built context. */
+async function wireCapture(){
+  micSource = await stage('media-source', async () => actx.createMediaStreamSource(micStream));
+  await stage('capture-node', () => buildCapture());
+  await stage('connect', async () => micSource.connect(capNode));
 }
 
 function micArming(){ return !!arming; }
@@ -219,6 +258,8 @@ function releaseMic(){
     capSink = null;
   }
   capIsWorklet = false;
+  // back to an output-only session, so the silent switch stays overridden
+  setAudioSession('playback');
 }
 
 /* ------------------------------------------------------------- capturing */

@@ -428,19 +428,26 @@ const MIC_ERRORS = {
     lcd: 'this browser cannot record',
     warn: 'This browser does not expose <code>getUserMedia</code>. Everything else works — ' +
           'empty slots play synth voices.'
+  },
+  InvalidStateError: {
+    lcd: 'audio session refused the mic',
+    warn: 'The audio session would not accept a microphone. This is usually iOS ' +
+          'switching the audio hardware underneath the page — reload and try REC ' +
+          'again. If it keeps happening, please report it with your iOS version.'
   }
 };
 
 function showMicError(err){
   if (err && err.name === 'AbortError') return;      // we cancelled it ourselves
   const name = (err && err.name) || 'Error';
+  const where = err && err.stage ? ' @' + err.stage : '';
   const known = MIC_ERRORS[name];
   if (known){
-    msg(known.lcd, 5000);
-    warn(known.warn);
+    msg(known.lcd + where, 6000);
+    warn(known.warn + (where ? ' <code>(' + name + where + ')</code>' : ''));
   } else {
-    msg('microphone failed: ' + name, 5000);
-    warn('The microphone could not be opened (<code>' + name + '</code>' +
+    msg('microphone failed: ' + name + where, 6000);
+    warn('The microphone could not be opened (<code>' + name + where + '</code>' +
          (err && err.message ? ': ' + String(err.message).slice(0, 120) : '') +
          '). Everything else works — empty slots play synth voices.');
   }
