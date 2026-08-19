@@ -111,6 +111,17 @@ function memUsed(){
 }
 function memFree(){ return Math.max(0, MEM_SECONDS - memUsed()); }
 
+/* What recording into slot `i` actually has to work with. Its current sound
+   is handed back the moment the new take lands, so it should not count
+   against the take — unless a copy in another slot shares the same buffer,
+   in which case the pool keeps paying for it either way. */
+function memFreeFor(i){
+  const b = slots[i].buffer;
+  if (!b) return memFree();
+  const shared = slots.some((s, j) => j !== i && s.buffer === b);
+  return shared ? memFree() : Math.max(0, MEM_SECONDS - (memUsed() - b.duration));
+}
+
 /* ---------------------------------------------------------- slice model
    Drum slices divide the trimmed region into 16 equal pieces until the
    user nudges one, at which point all 16 are frozen as explicit values. */
