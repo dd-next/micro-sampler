@@ -10,6 +10,11 @@
    Nothing here is loaded into the instrument unless ?diag is in the URL.
    ====================================================================== */
 
+/* Bumped whenever this file changes. A phone quietly serving a cached
+   build reads as a healthy one, and every conclusion drawn from it is
+   wrong; the number on screen says which code is actually answering. */
+const DIAG_BUILD = 3;
+
 const DIAG_ON = /[?&#]diag/.test(location.search + location.hash);
 
 let diagBox = null, diagOut = null;
@@ -98,8 +103,8 @@ function diagRefresh(){
 
   const sess = navigator.audioSession ? navigator.audioSession.type : 'unsupported';
   const rows = [
-    'ctx#' + (typeof ctxGen !== 'undefined' ? ctxGen : '?') + '  ' +
-      (ctx ? ctx.state : 'none') + '  ' + (ctx ? (ctx.sampleRate / 1000) + 'k' : ''),
+    'build ' + DIAG_BUILD + '   ctx#' + (typeof ctxGen !== 'undefined' ? ctxGen : '?') +
+      '  ' + (ctx ? ctx.state : 'none') + '  ' + (ctx ? (ctx.sampleRate / 1000) + 'k' : ''),
     'clock ' + clock,
     'session ' + sess + '   stale ' +
       (typeof contextStale !== 'undefined' && contextStale ? 'YES' : 'no'),
