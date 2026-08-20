@@ -19,20 +19,29 @@ let diagFreshCtx = null;
 
 function diagNote(text){
   diagNotes.push(text.slice(0, 90));
-  if (diagNotes.length > 4) diagNotes.shift();
+  if (diagNotes.length > 6) diagNotes.shift();
 }
 
-/* A bare oscillator, connected to nothing of ours. If this is silent while
-   the clock runs, the instrument's graph is not what went wrong. */
+/* A bare oscillator, connected to nothing of ours. A second is long enough
+   to be sure of what was heard, and long enough for the end of it to say
+   something: a context that reports `running` while rendering nothing never
+   reaches the note it was told to stop at, so the missing end event is the
+   finding. Audible or not is still a question only ears can answer. */
 function diagTone(ctx, label){
   try {
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.frequency.value = 440;
-    g.gain.value = 0.25;
+    g.gain.value = 0.3;
     o.connect(g); g.connect(ctx.destination);
-    o.start(); o.stop(ctx.currentTime + 0.25);
-    diagNote(label + ': fired at t=' + ctx.currentTime.toFixed(2) +
-             ' state=' + ctx.state);
+
+    let ended = false;
+    o.onended = () => { ended = true; diagNote(label + ': played to the end'); };
+    setTimeout(() => {
+      if (!ended) diagNote(label + ': NEVER ENDED — rendering nothing');
+    }, 1600);
+
+    o.start(); o.stop(ctx.currentTime + 1);
+    diagNote(label + ': fired t=' + ctx.currentTime.toFixed(2) + ' ' + ctx.state);
   } catch (err){
     diagNote(label + ': threw ' + err.name);
   }
