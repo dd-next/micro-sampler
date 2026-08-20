@@ -13,6 +13,14 @@
 const CAP_CHUNK = 2048;
 const MIN_SAMPLE = 0.06;      // shorter than this and it was a mis-tap
 
+/* Levelling a take. The synth voices are written to peak at full scale, so
+   a microphone held at arm's length — with autoGainControl off, which is
+   what keeps the room from pumping between hits — lands some 20 dB under
+   the sound it just replaced. Every take is lifted to one target instead. */
+const NORM_TARGET = 0.89;     // peak a finished take is scaled to
+const NORM_MAX    = 16;       // +24 dB ceiling; past this it is only room
+const NORM_FLOOR  = 0.003;    // under this nothing came in at all
+
 const WORKLET_SRC = `
 class Cap extends AudioWorkletProcessor {
   constructor(){
@@ -67,7 +75,8 @@ let arming = null;          // in-flight armMic promise, shared by all callers
 let lastMicError = null;
 let recState = 'idle';            // idle | recording | stopping
 let recSlot = null, recChunks = [], recCount = 0, recLimit = 0;
-let recPeak = 0, recCapTimer = null;
+let recPeak = 0, recTakeMax = 0, recCapTimer = null;
+let lastNormGain = 1;
 let stopResolve = null, stopTimer = null, stopDiscard = false;
 
 function micActive(){ return !!micStream; }
@@ -76,6 +85,14 @@ function recSeconds(){
   return actx && recCount ? recCount / actx.sampleRate : 0;
 }
 function recPeakLevel(){ const p = recPeak; recPeak = 0; return p; }
+/* The loudest thing in the take so far. Unlike recPeakLevel it is not
+   drained by the meter, so the UI can say "this is clipping" or "nothing is
+   reaching the microphone" about the whole take rather than one frame. */
+function recTakePeak(){ return recTakeMax; }
+/* How much the last finished take was lifted by, in dB. */
+function recLastGainDb(){
+  return lastNormGain > 0 ? 20 * Math.log10(lastNormGain) : 0;
+}
 
 /* ------------------------------------------------------------ mic setup */
 /* Safari is fussy about capture constraints and will reject the whole
@@ -273,6 +290,7 @@ function releaseMic(){
    sentinel lands. Assembling straight away used to lose the tail. */
 function onCaptured(pcm, peak, done){
   if (peak > recPeak) recPeak = peak;
+  if (recState !== 'idle' && peak > recTakeMax) recTakeMax = peak;
 
   if (recState !== 'idle' && pcm && pcm.length && recCount < recLimit){
     let block = pcm;
@@ -295,6 +313,7 @@ function startRec(slotIx){
   recChunks = [];
   recCount  = 0;
   recPeak   = 0;
+  recTakeMax = 0;
   recLimit  = Math.floor(free * actx.sampleRate);
 
   if (capIsWorklet) capNode.port.postMessage({ on:true });
@@ -305,7 +324,8 @@ function startRec(slotIx){
   return true;
 }
 
-/* Resolves to 'ok' | 'short' | 'none'. `discard` throws the take away. */
+/* Resolves to 'ok' | 'short' | 'quiet' | 'none'. `discard` throws the take
+   away; 'quiet' means the microphone heard nothing worth keeping. */
 function stopRec(discard){
   if (recState === 'idle') return Promise.resolve('none');
   if (recState === 'stopping'){
@@ -344,6 +364,10 @@ function finishStop(){
   let at = 0;
   for (const c of chunks){ flat.set(c, at); at += c.length; }
 
+  const gain = normalise(flat, n);
+  if (!gain){ finish('quiet'); return; }
+  lastNormGain = gain;
+
   const keep = silentTailAt(flat, actx.sampleRate);
   const buf = actx.createBuffer(1, keep, actx.sampleRate);
   buf.getChannelData(0).set(flat.subarray(0, keep));
@@ -355,6 +379,23 @@ function finishStop(){
   s.length = 1;
   resetSlices(s);
   finish('ok');
+}
+
+/* Scale a take to NORM_TARGET, in place. Returns the gain applied, or 0 if
+   the take is silence — a slot is worth keeping only for something that was
+   actually played, and lifting a room by 24 dB is not that.
+
+   Runs before silentTailAt on purpose: that threshold is an absolute
+   amplitude, so on a quiet take it would trim live audio as dead air. */
+function normalise(d, n){
+  let peak = 0;
+  for (let i = 0; i < n; i++){ const a = d[i] < 0 ? -d[i] : d[i]; if (a > peak) peak = a; }
+  if (peak < NORM_FLOOR) return 0;
+
+  const gain = Math.min(NORM_TARGET / peak, NORM_MAX);
+  if (Math.abs(gain - 1) < 0.01) return 1;       // already sitting on target
+  for (let i = 0; i < n; i++) d[i] *= gain;
+  return gain;
 }
 
 /* Length to keep once the dead air at the end is dropped, so slices land on
