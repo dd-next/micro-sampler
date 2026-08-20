@@ -284,6 +284,11 @@ body{
   border:2px solid var(--line);overflow:hidden;
 }
 .lcd-row3 .lvl i{display:block;height:100%;width:0;background:var(--lcd-on)}
+/* Sampling only: the take is clipping, or too far off the microphone to be
+   worth lifting. The LCD is otherwise monochrome, but a red clip light is
+   the one place worth spending a colour on. */
+.lcd-row3 .lvl i.hot{background:var(--red)}
+.lcd-row3 .lvl i.weak{background:var(--lcd-off)}
 
 /* -------------------------------------------------------------- 4x4 keys
    The one element that flexes: it absorbs whatever height is left over.

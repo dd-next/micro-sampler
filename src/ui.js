@@ -404,10 +404,17 @@ function recKeyUp(i){
       lastSlice = 0;
       selectSlot(i);
       releaseLatch();
-      msg('sampled ' + slotName(i) + ' — ' + slots[i].buffer.duration.toFixed(2) + 's');
+      // The boost is worth showing: a take that needed +20 dB was recorded
+      // too far from the microphone, and the number teaches that faster
+      // than any warning would.
+      const db = Math.round(recLastGainDb());
+      msg('sampled ' + slotName(i) + ' — ' + slots[i].buffer.duration.toFixed(2) + 's' +
+          (db >= 1 ? ' · +' + db + ' dB' : ''));
       scheduleSave();
     } else if (r === 'short'){
       msg('too short — hold the key down');
+    } else if (r === 'quiet'){
+      msg('nothing reached the microphone');
     }
     renderGrid();
     updateMem();
@@ -882,7 +889,7 @@ $('guideClose').addEventListener('click', closeGuide);
 guideEl.addEventListener('click', e => { if (e.target === guideEl) closeGuide(); });
 
 /* ============================================================= UI loop */
-let lastPat = -1, lastDrawStep = -2, rafRunning = false;
+let lastPat = -1, lastDrawStep = -2, lastLvlCls = '', rafRunning = false;
 
 function uiLoop(){
   if (!actx){ rafRunning = false; return; }
@@ -902,10 +909,21 @@ function uiLoop(){
   }
 
   // level meter — recording level while sampling, output level otherwise
-  const lvl = recActiveSlot() != null ? recPeakLevel() : meterLevel();
+  const recing = recActiveSlot() != null;
+  const lvl = recing ? recPeakLevel() : meterLevel();
   lvlFill.style.width = Math.min(100, lvl * 130).toFixed(0) + '%';
 
-  if (recActiveSlot() != null){
+  // While sampling the bar also reports the take as a whole: `hot` latches
+  // once anything clipped, `weak` says the source is too far away to be
+  // worth lifting. Both are visible before the key comes up, which is the
+  // only moment they are still worth acting on.
+  const take = recing ? recTakePeak() : 0;
+  const cls = !recing ? ''
+            : take >= 0.98 ? 'hot'
+            : (recSeconds() > 0.3 && take < 0.06) ? 'weak' : '';
+  if (cls !== lastLvlCls){ lvlFill.className = cls; lastLvlCls = cls; }
+
+  if (recing){
     const left = Math.max(0, memFreeFor(recActiveSlot()) - recSeconds());
     memVal.textContent = left.toFixed(1);
     memFill.style.width = (left / MEM_SECONDS * 100).toFixed(1) + '%';
