@@ -167,12 +167,20 @@ function onLeaveMode(m){
   }, { capture:true, passive:true });
 });
 
-function modDown(m){
+/* How long a press may last and still count as a tap. A mouse click is over
+   in a moment; a thumb that has to travel to the button and back rests on it
+   far longer, and 450 ms is under what a deliberate tap takes on a phone.
+   Tap-to-latch exists for touch in the first place — the hardware only holds
+   — so a press that missed the window there is a latch that did not happen,
+   not a modifier the player meant to hold. */
+const LATCH_MS = 450, LATCH_MS_TOUCH = 900;
+
+function modDown(m, touch){
   ensureAudio();
   if (isHeld(m)) return;
   const wasLatched = latchedMod === m;
   if (wasLatched) latchedMod = null;            // tapping a latched mode exits it
-  heldStack.push({ mod:m, at:performance.now(), used:false, wasLatched });
+  heldStack.push({ mod:m, at:performance.now(), used:false, wasLatched, touch:!!touch });
   // Each fresh press of PATTERN starts a new chain, even when the mode was
   // already active and applyMode below has nothing to transition.
   if (m === 'pattern') chainBuilding = false;
@@ -182,7 +190,7 @@ function modUp(m){
   const ix = heldStack.findIndex(h => h.mod === m);
   if (ix < 0) return;
   const h = heldStack.splice(ix, 1)[0];
-  const quick = performance.now() - h.at < 450;
+  const quick = performance.now() - h.at < (h.touch ? LATCH_MS_TOUCH : LATCH_MS);
   // A quick tap that did nothing latches the mode. Anything else — a long
   // hold, or a hold that was used as a modifier — leaves any existing latch
   // alone, so WRITE survives being combined with FX.
@@ -199,7 +207,7 @@ document.querySelectorAll('.mbtn').forEach(b => {
     if (e.button != null && e.button !== 0) return;
     e.preventDefault();
     b.setPointerCapture(e.pointerId);
-    modDown(m);
+    modDown(m, e.pointerType === 'touch');
   });
   const up = e => {
     e.preventDefault();

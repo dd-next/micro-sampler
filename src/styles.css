@@ -179,7 +179,9 @@ body{
   border-radius:var(--r);padding:5px 4px;cursor:pointer;
   font-family:var(--mono);font-size:11px;font-weight:700;
   letter-spacing:.08em;text-transform:uppercase;
-  -webkit-tap-highlight-color:transparent;
+  /* the only control that was left out: without this the browser keeps a tap
+     on del/rev/slice/copy waiting to see whether a double-tap zoom follows */
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
 }
 .mini:active{transform:translate(3px,3px);box-shadow:none}
 .mini:focus-visible{outline:var(--bw) solid var(--line);outline-offset:3px}
