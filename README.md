@@ -31,7 +31,10 @@ and a UI that behaves like an instrument rather than a web page.
   16 slices, one per key).
 - **Hold-to-sample.** Hold `REC` and hold a key: the microphone records for
   exactly as long as you hold it, straight into a Float32 buffer. No
-  container, no codec, no decode step.
+  container, no codec, no decode step. Every take is levelled on the way in,
+  so a sample sits with the synthesised voices instead of 20 dB under them;
+  the LCD meter turns red when the take clips and dim when the source is too
+  far away, and the take is reported with the boost it needed.
 - **Waveform editor.** Drag either edge to trim. Drum slices are drawn
   individually and each one can be nudged on its own.
 - **Two knobs, three pages.** `TONE` (tune, volume), `FILTER` (a single knob
@@ -63,7 +66,7 @@ so both are supported.
 | --- | --- |
 | *(none)* | `KEYS` — plays the selected sound: chromatic notes, or slices |
 | `SOUND` | Selects which of the 16 sounds is active |
-| `PATTERN` | Selects a pattern. **Hold** and press several keys to chain them |
+| `PATTERN` | Selects a pattern. **Hold** and press several keys to chain them. `copy` here duplicates the pattern into the next key you press |
 | `WRITE` | Stopped: keys are the 16 steps, tap to toggle. Playing: keys punch in, quantized |
 | `FX` | Hold a key to apply that effect. With `WRITE` also on, it is saved into the pattern |
 | `REC` | Hold a key to sample into that slot for as long as you hold it |
@@ -71,7 +74,8 @@ so both are supported.
 
 Other controls: `PLAY`, `LIVE` (record from `KEYS` without holding `WRITE`),
 `CLR` (clear the current sound's track), tempo preset, fine tempo, swing,
-master volume, and per-sound `del` / `reverse` / `re-slice` / `copy`.
+master volume, and per-sound `del` / `reverse` / `re-slice` / `copy` (`copy` duplicates
+the current pattern instead when `PATTERN` is the active mode).
 
 ### Keyboard
 
