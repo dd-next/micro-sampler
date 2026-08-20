@@ -145,6 +145,14 @@ function hasLock(cell){
   return !!cell && (cell.tune !== undefined || cell.vol !== undefined ||
                     cell.cut  !== undefined || cell.res !== undefined);
 }
+/* A pattern is copied cell by cell: a cell may carry parameter locks, so a
+   shallow row copy would leave the two patterns sharing lock objects and
+   editing one would silently edit the other. */
+function copyPatternInto(srcIx, dstIx){
+  const src = patterns[srcIx], dst = patterns[dstIx];
+  dst.tracks = src.tracks.map(tr => tr.map(c => (c ? { ...c } : null)));
+  dst.fx     = src.fx.slice();
+}
 function patternHasContent(p){
   const pt = patterns[p];
   return pt.tracks.some(tr => tr.some(c => c != null)) || pt.fx.some(f => f != null);

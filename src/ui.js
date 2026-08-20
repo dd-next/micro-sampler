@@ -129,6 +129,10 @@ function onEnterMode(m){
   if (m === 'sound') msg('pick a sound');
 }
 function onLeaveMode(m){
+  /* An armed copy belongs to the mode that armed it. Leaving cancels it, so
+     a forgotten arming cannot quietly overwrite a pattern on some later
+     press that was only meant to change pattern. */
+  if (copyArmed && m === copyKind) cancelCopy('copy cancelled');
   if (m === 'fx') fxAllOff();
   if (m === 'rec'){
     recIntent = null;
@@ -237,8 +241,8 @@ function flash(el){
 
 /* -------------------------------------------------------------- SOUND */
 function soundKey(i){
-  if (copyArmed && copySource != null && i !== copySource) doCopy(i);
-  else if (copyArmed) cancelCopy('pick a different slot');
+  if (copyArmed && copyKind === 'sound' && i !== copySource) doCopy(i);
+  else if (copyArmed && copyKind === 'sound') cancelCopy('pick a different slot');
   selectSlot(i);
   releaseLatch();
 }
@@ -266,6 +270,12 @@ function playKey(i, el){
    single selection instead — otherwise a second tap would silently turn a
    pattern change into a two-bar song. */
 function patternKey(i){
+  // An armed copy consumes the press: this key is the destination.
+  if (copyArmed && copyKind === 'pattern'){
+    if (i === copySource){ cancelCopy('pick a different pattern'); return; }
+    doPatternCopy(i);
+    return;
+  }
   const chaining = isHeld('pattern') && chainBuilding;
   if (chaining && chain.length < MAX_CHAIN){
     chain.push(i);
@@ -782,13 +792,27 @@ $('resliceBtn').addEventListener('click', () => {
   drawWave(); syncKnobsFromSlot(); scheduleSave();
 });
 
-let copyArmed = false, copySource = null;
+let copyArmed = false, copySource = null, copyKind = null;   // 'sound' | 'pattern'
 const copyBtn = $('copyBtn');
 
 copyBtn.addEventListener('click', () => {
   if (copyArmed){ cancelCopy('copy cancelled'); return; }
+  // The button copies whatever the interface is currently about: in PATTERN
+  // that is the pattern, everywhere else the sound.
+  if (mode === 'pattern'){
+    copyArmed = true;
+    copyKind = 'pattern';
+    copySource = curPat;
+    copyBtn.classList.add('armed');
+    latchedMod = 'pattern';
+    chainBuilding = false;      // the next press is a destination, not a bar
+    applyMode();
+    msg('pick a destination pattern');
+    return;
+  }
   if (!slots[sel].buffer){ msg('nothing to copy'); return; }
   copyArmed = true;
+  copyKind = 'sound';
   copySource = sel;
   copyBtn.classList.add('armed');
   latchedMod = 'sound';
@@ -796,7 +820,7 @@ copyBtn.addEventListener('click', () => {
   msg('pick a destination slot');
 });
 function cancelCopy(why){
-  copyArmed = false; copySource = null;
+  copyArmed = false; copySource = null; copyKind = null;
   copyBtn.classList.remove('armed');
   if (why) msg(why);
 }
@@ -813,6 +837,23 @@ function doCopy(dstIx){
   cancelCopy(null);
   msg('copied ' + from + ' → ' + to);
   updateMem();
+  scheduleSave();
+}
+
+function doPatternCopy(dstIx){
+  copyPatternInto(copySource, dstIx);
+  const from = copySource + 1, to = dstIx + 1;
+  cancelCopy(null);
+  /* Land on the copy. Duplicating a pattern is almost always the first half
+     of varying it, so leaving the original selected would just cost a press
+     — and risk editing the wrong one. */
+  chain = [dstIx];
+  chainBuilding = true;
+  chainPos = 0;
+  if (!playing) curPat = dstIx;
+  updateChainLabel();
+  renderGrid();
+  msg('copied pattern ' + from + ' → ' + to);
   scheduleSave();
 }
 
