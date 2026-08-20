@@ -9,6 +9,7 @@ let actx = null, masterGain, comp, analyser, noiseBuf;
 let meterData = null;
 let offlineCtx = null;
 let resumePromise = null;
+let contextStale = false;   // a resume was tried and the output stayed dead
 
 /* Build an AudioBuffer without an AudioContext.
    iOS gives you a permanently silent context if one is constructed outside a
@@ -33,25 +34,66 @@ function resumeAudio(){
   }
   if (resumePromise) return resumePromise;
 
+  /* Safari also resolves resume() on a context that stays put, so the state
+     afterwards is the answer, not the promise. A resume that does not take
+     is remembered: from there only a new context can play anything. */
+  const ctx = actx;
+  const stalled = () => { if (actx === ctx) contextStale = true; };
+
   try {
-    const attempt = Promise.resolve(actx.resume()).then(() => true);
+    const attempt = Promise.resolve(ctx.resume()).then(() => ctx.state === 'running');
     const timeout = new Promise(resolve => {
       setTimeout(() => resolve(false), 1200);
     });
     resumePromise = Promise.race([attempt, timeout]).then(ok => {
-      if (!ok) console.warn('AudioContext resume timed out', actx.state);
+      if (!ok){
+        console.warn('AudioContext resume did not take', ctx.state);
+        stalled();
+      }
       resumePromise = null;
       return ok;
     }).catch(err => {
       console.warn('AudioContext resume failed', err);
+      stalled();
       resumePromise = null;
       return false;
     });
   } catch (err){
     console.warn('AudioContext resume failed', err);
+    stalled();
     return Promise.resolve(false);
   }
   return resumePromise;
+}
+
+/* A context that has been through an iOS interruption — a lock screen, a
+   call, minutes in the background — often comes back reporting `running`
+   while playing nothing, and resume() on it never settles. Replacing it is
+   the only way out, and iOS only builds a working context inside a user
+   gesture, which is what every caller of ensureAudio is. */
+function reviveAudio(){
+  // The capture graph belongs to the context being dropped. Letting go of
+  // the microphone here means the next REC opens a live one instead of
+  // recording silence into a context nothing can hear.
+  if (typeof micActive === 'function' && micActive() &&
+      typeof releaseMic === 'function') releaseMic();
+  return rebuildAudio();
+}
+
+/* A stalled context is not always honest about it: the state reads
+   `running` and the clock stands still, so every voice is scheduled for a
+   time that never arrives. Only the clock itself gives that away. */
+function checkClock(){
+  const ctx = actx;
+  if (!ctx || ctx.state !== 'running') return;
+  const t0 = ctx.currentTime;
+  setTimeout(() => {
+    if (actx !== ctx || ctx.state !== 'running') return;
+    if (ctx.currentTime === t0){
+      console.warn('AudioContext clock is not advancing');
+      contextStale = true;
+    }
+  }, 400);
 }
 
 /* iOS audio sessions.
@@ -78,21 +120,31 @@ function setAudioSession(type){
 function rebuildAudio(){
   const old = actx;
   const wasPlaying = typeof playing !== 'undefined' && playing;
+  const at = { step: currentStep, pat: curPat, pos: chainPos };
   if (wasPlaying && typeof stopSeq === 'function') stopSeq();
   if (typeof stopScratch === 'function') stopScratch();
 
   actx = null; masterGain = null; comp = null; analyser = null; noiseBuf = null;
+  resumePromise = null;    // it was waiting on the context being thrown away
+  contextStale = false;
   if (typeof slots !== 'undefined') slots.forEach(s => { s.rev = null; });
   revSynth.clear();
   if (old){ try { old.close(); } catch (e) { /* already gone */ } }
 
   const next = ensureAudio();
-  if (wasPlaying && typeof startSeq === 'function') startSeq();
+  if (wasPlaying && typeof startSeq === 'function'){
+    startSeq();
+    // pick the loop up where it stopped, not at the top of the pattern
+    currentStep = at.step; curPat = at.pat; chainPos = at.pos;
+  }
   return next;
 }
 
 function ensureAudio(){
   if (actx){
+    if (contextStale || actx.state === 'interrupted' || actx.state === 'closed'){
+      return reviveAudio();
+    }
     resumeAudio();
     if (typeof startUiLoop === 'function') startUiLoop();
     return actx;
@@ -156,11 +208,19 @@ function unlockIOS(){
 }
 
 /* Mobile browsers suspend the context when the tab goes to the background
-   and do not always resume it on return. */
+   and do not always resume it on return. Coming back is not proof of life
+   either, so the clock is checked afterwards; a context that fails either
+   test is left for the next tap to replace, since that tap is a gesture and
+   this event is not. */
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && actx){
-    resumeAudio();
-  }
+  if (document.visibilityState !== 'visible' || !actx) return;
+  resumeAudio().then(ok => { if (ok) checkClock(); });
+});
+
+/* Restored from the page cache — the session was never reloaded, it was
+   frozen and thawed. Nothing built before the freeze plays again on iOS. */
+window.addEventListener('pageshow', e => {
+  if (e.persisted && actx) contextStale = true;
 });
 
 /* On iOS, pointerdown/touchstart has not been a reliable Web Audio unlock
@@ -169,8 +229,7 @@ document.addEventListener('visibilitychange', () => {
    low-latency pointer path used by the pads. */
 ['touchend', 'click'].forEach(type => {
   document.addEventListener(type, () => {
-    if (!actx) ensureAudio();
-    else if (actx.state !== 'running') resumeAudio();
+    if (!actx || contextStale || actx.state !== 'running') ensureAudio();
   }, { capture:true, passive:true });
 });
 
