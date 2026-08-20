@@ -1,6 +1,6 @@
 /* Cache the shell so the instrument opens offline once visited.
    Bump CACHE when any of these files change. */
-const CACHE = 'micro-sampler-v14';
+const CACHE = 'micro-sampler-v15';
 
 const SHELL = [
   './',
@@ -16,6 +16,7 @@ const SHELL = [
   'src/ui.js',
   'src/keys.js',
   'src/persist.js',
+  'src/diag.js',
   'src/main.js',
   'public/manifest.webmanifest',
   'public/icon.svg',

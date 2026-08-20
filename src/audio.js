@@ -10,6 +10,14 @@ let meterData = null;
 let offlineCtx = null;
 let resumePromise = null;
 let contextStale = false;   // a resume was tried and the output stayed dead
+let heldTransport = null;   // where the loop was when the audio was handed back
+let ctxGen = 0;             // how many contexts this page has been through
+
+/* iOS is the only platform that takes the audio session away and does not
+   give it back, and the handling below costs something everywhere else —
+   a hidden desktop tab is expected to keep playing. */
+const IS_IOS = /iP(hone|od|ad)/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 /* Build an AudioBuffer without an AudioContext.
    iOS gives you a permanently silent context if one is constructed outside a
@@ -114,6 +122,36 @@ function setAudioSession(type){
   return false;
 }
 
+/* Going to the background still holding a `playback` session is what wedges
+   iOS: the session is interrupted by the lock screen and never comes back to
+   this page. Not for a resumed context, not for a new one — not even for a
+   reload, since the tab keeps the session that was wedged. Only a new tab
+   plays again, which is no kind of fix.
+
+   So the session is handed back before the page is put away. Nothing is
+   holding it while the screen is off, there is no interruption to recover
+   from, and the next tap takes a fresh one. */
+function releaseAudio(){
+  if (!actx) return;
+  const wasPlaying = typeof playing !== 'undefined' && playing;
+  heldTransport = wasPlaying ? { step: currentStep, pat: curPat, pos: chainPos } : null;
+  if (wasPlaying && typeof stopSeq === 'function') stopSeq();
+  if (typeof stopScratch === 'function') stopScratch();
+  if (typeof micActive === 'function' && micActive() &&
+      typeof releaseMic === 'function') releaseMic();
+
+  const old = actx;
+  actx = null; masterGain = null; comp = null; analyser = null; noiseBuf = null;
+  resumePromise = null;
+  contextStale = false;
+  if (typeof slots !== 'undefined') slots.forEach(s => { s.rev = null; });
+  revSynth.clear();
+  try { old.close(); } catch (e) { /* already gone */ }
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = 'auto';
+  } catch (e) { /* not supported on this browser */ }
+}
+
 /* Switching session type can change the hardware sample rate underneath a
    live AudioContext, which leaves it unusable. Start a clean one and rebuild
    the graph. AudioBuffers survive: they are not bound to a context. */
@@ -172,6 +210,8 @@ function ensureAudio(){
   comp.connect(analyser);
   comp.connect(actx.destination);
 
+  ctxGen++;
+
   const len = actx.sampleRate * 2;
   noiseBuf = actx.createBuffer(1, len, actx.sampleRate);
   const d = noiseBuf.getChannelData(0);
@@ -181,6 +221,14 @@ function ensureAudio(){
   unlockIOS();
   resumeAudio();
   if (typeof startUiLoop === 'function') startUiLoop();
+
+  // the loop was left running when the session was handed back
+  if (heldTransport && typeof startSeq === 'function'){
+    const at = heldTransport;
+    heldTransport = null;
+    startSeq();
+    currentStep = at.step; curPat = at.pat; chainPos = at.pos;
+  }
   return actx;
 }
 
@@ -213,9 +261,14 @@ function unlockIOS(){
    test is left for the next tap to replace, since that tap is a gesture and
    this event is not. */
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || !actx) return;
+  if (document.visibilityState === 'hidden'){
+    if (IS_IOS) releaseAudio();
+    return;
+  }
+  if (!actx) return;
   resumeAudio().then(ok => { if (ok) checkClock(); });
 });
+window.addEventListener('pagehide', () => { if (IS_IOS) releaseAudio(); });
 
 /* Restored from the page cache — the session was never reloaded, it was
    frozen and thawed. Nothing built before the freeze plays again on iOS. */
